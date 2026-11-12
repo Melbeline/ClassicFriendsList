@@ -11,7 +11,7 @@ Characters in the friends list, the classic way, for WoW Forever. Forever's serv
   - Si les deux lignes sont remplies, le bouton du jeu envoie celle du haut, puis l'addon ajoute celle du bas.
   - **Tab** passe d'une ligne à l'autre. La page « ? » reste celle du jeu.
   - Le nom à donner est le **prénom et le nom** du personnage : sur Forever, c'est le nom complet qui désigne un personnage, le prénom seul n'en trouve aucun.
-- **Dans la liste d'amis** : les personnages apparaissent **au-dessus des amis Battle.net hors ligne**, dans le style des lignes du jeu, **connectés ou non**.
+- **Dans la liste d'amis** : la fenêtre d'amis par défaut de Forever (la nouvelle fenêtre sociale) les montre dans une section à eux, **« Personnages (connectés/total) »**, sous les amis Battle.net, chacun sur une carte du jeu (nom, niveau, classe, zone, ou depuis quand il n'a pas été vu) ; la section se replie comme celles du jeu, et la barre de recherche les filtre aussi. Dans l'ancienne fenêtre d'amis (celle de ClassicUI), ils apparaissent **au-dessus des amis Battle.net hors ligne**, dans le style des lignes du jeu. **Connectés ou non** :
   - Connectés : le niveau, la classe et la zone (quand le personnage a lui aussi ClassicFriendsList ou Clara, et toi dans sa liste).
   - Hors ligne : depuis quand il n'a pas été vu.
   - Survol : son infobulle. **Clic droit** : **chuchoter**, **inviter** ou **retirer de la liste**.
@@ -36,7 +36,7 @@ Characters in the friends list, the classic way, for WoW Forever. Forever's serv
   - **The bottom line is the addon's**, with its title above it ("ClassicFriendsList addon's line") and the text "Character name: classic friend". It adds a character to the list at once, no request, with the mail's To suggestions. Enter or **Add Friend** adds it and shuts the window.
   - Both lines typed: the game's button sends the top one, then the addon adds the bottom one.
   - **Tab** moves between the lines. The name is the character's **first name and surname**: on Forever the whole name is what finds a character.
-- **In the friends list**: the characters show above the offline Battle.net friends, in the game's row look, online or offline.
+- **In the friends list**: Forever's default friends window (the new social window) shows them in a section of their own, "Characters (online/total)", under the Battle.net friends, each on the game's card; it folds like the game's sections and the search box filters it. In the older friends window (ClassicUI's), they show above the offline Battle.net friends, in the game's row look. Online or offline:
   - Online: level, class and zone, from their own ClassicFriendsList or Clara.
   - Offline: when last seen.
   - Hover: a tooltip. Right-click: whisper, invite, remove.

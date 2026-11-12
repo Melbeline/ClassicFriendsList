@@ -529,6 +529,7 @@ end
 
 function CFL.Refresh()
   if FriendsListFrame and FriendsListFrame:IsShown() and FriendsList_Update then FriendsList_Update(true) end
+  if CFL.SocialRefresh then CFL.SocialRefresh() end
 end
 
 ---------------------------------------------------------------------------
@@ -591,6 +592,7 @@ local function Catcher(button)
   button.classicFriend = catcher
   return catcher
 end
+CFL.Catcher = Catcher
 
 local function Color(color, alpha)
   if type(color) == "table" and color.GetRGBA then return color:GetRGBA() end
@@ -647,6 +649,114 @@ local function Hook()
   if FriendsFrame_UpdateFriendButton then
     hooksecurefunc("FriendsFrame_UpdateFriendButton", function(button, entry) CFL.DrawRow(button, entry) end)
   end
+end
+
+---------------------------------------------------------------------------
+-- The game's new social window (WoW Forever's friends window when its server turns it on: the default UI's). Its
+-- friends list is a tree of Battle.net friend cards: the characters there as a section of their own, under the
+-- Battle.net friends ("Characters (2/5)", folded and unfolded as the game's own sections), each on the game's card,
+-- drawn by the game from what is known of it (name, level, class, zone, when last seen); the mouse on a layer of ours
+-- (tooltip, right-click menu), the Battle.net friend's party and summon buttons hidden. The game's search box
+-- filters them too.
+---------------------------------------------------------------------------
+local SOCIAL_HEADER = "classicFriends"
+local socialView
+local socialNodes = {} -- (our section's nodes in the list shown: taken out and put back as it changes)
+
+-- What the game's card reads of a friend, for a character
+local function SocialInfo(alt)
+  local online = CFL.Online(alt.name)
+  local facts = CFL.Facts(alt.name)
+  local levels = Enum and Enum.BattleNetFriendLevel
+  local raf = Enum and Enum.RafLinkType
+  return {
+    accountName = alt.name, battleTag = "", note = "", friendTags = {}, isFavorite = false, isAFK = false,
+    isDND = false, customMessage = "", customMessageTime = 0, rafLinkType = raf and raf.None or 0,
+    friendLevel = levels and levels.Title, lastOnlineTime = (not online and facts.at) or 0,
+    gameAccountInfo = {
+      isOnline = online, characterName = alt.name, characterLevel = facts.level,
+      className = facts.class and ClassName(facts.class) or nil, classFilename = facts.class,
+      areaName = online and (facts.zone or L.ONLINE) or nil, richPresence = facts.zone,
+      clientProgram = online and (BNET_CLIENT_WOW or "WoW") or "", wowProjectID = WOW_PROJECT_ID,
+      factionName = UnitFactionGroup("player"), realmID = 0, isInCurrentRegion = true,
+      isGameAFK = false, isGameBusy = false,
+    },
+  }
+end
+
+local function SocialMatches(alt)
+  local bar = socialView and socialView.FilterBar and socialView.FilterBar.SearchBar
+  local ok, text = pcall(function() return bar and bar:GetText() end)
+  if not ok or type(text) ~= "string" or issecret(text) or text == "" then return true end
+  return alt.name:lower():find(text:lower(), 1, true) ~= nil
+end
+
+local function SocialInsert(provider)
+  socialNodes = {}
+  if off or not (socialView and provider and provider.Insert) then return end
+  local alts, online = {}, 0
+  for _, alt in ipairs(Sorted()) do
+    if not GameFriend(alt.name) and SocialMatches(alt) then
+      alts[#alts + 1] = alt
+      if CFL.Online(alt.name) then online = online + 1 end
+    end
+  end
+  if #alts == 0 then return end
+  local okEmpty, empty = pcall(provider.IsEmpty, provider)
+  if okEmpty and not empty then socialNodes[#socialNodes + 1] = provider:Insert({ isSpacer = true }) end
+  local header = provider:Insert({ headerType = SOCIAL_HEADER, headerText = L.SOCIAL_HEADER:format(online, #alts) })
+  socialNodes[#socialNodes + 1] = header
+  local okFolded, folded = pcall(socialView.IsHeaderCollapsed, socialView, SOCIAL_HEADER)
+  local constants = TreeDataProviderConstants
+  header:SetCollapsed(okFolded and folded == true, constants and constants.RetainChildCollapse, constants and constants.SkipInvalidation)
+  header:Insert({ isSpacer = true })
+  for _, alt in ipairs(alts) do header:Insert({ classicFriend = alt, accountInfo = SocialInfo(alt) }) end
+end
+
+-- The list shown again with what changed: our section only, taken out and put back
+local function SocialRefresh()
+  if not (socialView and socialView:IsVisible()) then return end
+  local provider = socialView.ScrollBox:GetDataProvider()
+  if not provider then return end
+  for i = #socialNodes, 1, -1 do pcall(provider.Remove, provider, socialNodes[i]) end
+  SocialInsert(provider)
+end
+CFL.SocialRefresh = SocialRefresh
+
+-- Each card as the list draws it: ours with the mouse layer and without the party and summon buttons; a Battle.net
+-- friend's as the game made it (its party button back when the card was ours before)
+local function SocialCard(_, frame, node)
+  local data = node and node.GetData and node:GetData()
+  local alt = type(data) == "table" and data.classicFriend
+  if not alt then
+    if frame.classicFriend then frame.classicFriend:Hide(); frame.classicFriend.alt = nil end
+    if frame.classicFriendHid and frame.PartyButton then frame.PartyButton:Show() end
+    frame.classicFriendHid = nil
+    return
+  end
+  if frame.PartyButton then frame.PartyButton:Hide() end
+  if frame.RAFSummonButton then frame.RAFSummonButton:Hide() end
+  frame.classicFriendHid = true
+  local catcher = CFL.Catcher(frame)
+  catcher.alt = alt
+  catcher:Show()
+end
+
+function CFL.HookSocial()
+  if socialView then return true end
+  local view = SocialUIFrame and SocialUIFrame.FriendsList
+  local box = view and view.ScrollBox
+  local events = ScrollBoxListMixin and ScrollBoxListMixin.Event
+  if not (box and box.SetDataProvider and box.RegisterCallback and events) then return false end
+  socialView = view
+  hooksecurefunc(box, "SetDataProvider", function(_, provider) SocialInsert(provider) end)
+  box:RegisterCallback(events.OnInitializedFrame, SocialCard, CFL)
+  box:RegisterCallback(events.OnReleasedFrame, function(_, frame)
+    if frame.classicFriend then frame.classicFriend:Hide(); frame.classicFriend.alt = nil end
+  end, CFL)
+  local provider = box:GetDataProvider()
+  if provider then SocialInsert(provider) end
+  return true
 end
 
 ---------------------------------------------------------------------------
@@ -752,7 +862,9 @@ local function Whisper(to, text)
   return result == nil or result == true or result == 0 or (success ~= nil and result == success)
 end
 
-local function ListOpen() return FriendsFrame ~= nil and FriendsFrame:IsVisible() and true or false end
+local function ListOpen()
+  return (FriendsFrame ~= nil and FriendsFrame:IsVisible()) or (SocialUIFrame ~= nil and SocialUIFrame:IsVisible()) or false
+end
 
 -- One question to one character; false when the game refused to send it now (throttled: asked again later)
 local function AskOne(alt, now)
@@ -944,6 +1056,9 @@ local function StartProbes()
   if FriendsFrame and FriendsFrame.HookScript then
     FriendsFrame:HookScript("OnShow", function() if GetTime() >= pausedUntil then AskAll() end end)
   end
+  if SocialUIFrame and SocialUIFrame.HookScript then
+    SocialUIFrame:HookScript("OnShow", function() if GetTime() >= pausedUntil then AskAll() end end)
+  end
   probeEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
   C_Timer.NewTicker(1, AskServer)
 end
@@ -1005,11 +1120,16 @@ events:SetScript("OnEvent", function(self, event, name)
   end
   List()
   Hook()
-  if not CFL.DressAddFriend() then
-    -- (the game's Add Friend window loads with its friends window: dressed as it comes)
+  local dressed, social = CFL.DressAddFriend(), CFL.HookSocial()
+  if not (dressed and social) then
+    -- (the game's Add Friend window and its social window load with their friends windows: dressed as they come)
     local wait = CreateFrame("Frame")
     wait:RegisterEvent("ADDON_LOADED")
-    wait:SetScript("OnEvent", function(waiter) if CFL.DressAddFriend() then waiter:UnregisterAllEvents() end end)
+    wait:SetScript("OnEvent", function(waiter)
+      dressed = dressed or CFL.DressAddFriend()
+      social = social or CFL.HookSocial()
+      if dressed and social then waiter:UnregisterAllEvents() end
+    end)
   end
   Look(false)
   StartProbes()
