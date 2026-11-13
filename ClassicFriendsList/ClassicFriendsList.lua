@@ -706,10 +706,10 @@ end
 ---------------------------------------------------------------------------
 -- The game's new social window (WoW Forever's friends window when its server turns it on: the default UI's): the
 -- characters in its friends list, on the game's own cards, after the Battle.net friends online and before those
--- offline (as the 1.x list). Put in the list as the game builds it, before the game lays it out: laid out from an
--- addon's code, the list's size cache would be the addon's, and the game would then refuse its own friend search
--- ("blocked"). A Battle.net card always comes before them (after the first one when none is online), so that the
--- game's card size is the game's own. Each card drawn by the game from what is known of the character; the mouse on
+-- offline (as the 1.x list). Put in the list as the game builds it, before the game lays it out (never laid out from
+-- the addon's code); the game's card-size cache, filled as it lays out our lines too, emptied after each read (else
+-- the game would refuse its own friend search at its next refresh: an empty list). A Battle.net card always comes
+-- before them (after the first one when none is online). Each card drawn by the game from what is known of the character; the mouse on
 -- a layer of ours (tooltip, right-click menu), the Battle.net party and summon buttons hidden. The search box filters
 -- them too. A change: the cards drawn again in place, the list rebuilt only when their number changes.
 ---------------------------------------------------------------------------
@@ -886,6 +886,18 @@ function CFL.HookSocial()
   socialView = view
   -- (in the list the game builds, before it lays it out)
   hooksecurefunc(view, "InsertFriendsIntoDataProvider", function(_, provider) SocialInsert(provider) end)
+  -- The game's card-size cache: the game fills it as it lays the list out, a pass that has read our lines (an
+  -- addon's) first, so each size is put in it in the addon's name; at its next refresh the game empties it just
+  -- before its friend search, and a size of ours found there then has the search refused: the list empty (black,
+  -- every other time the window opened) or scrolled back up (a Battle.net friend's news). Taken out again as soon as
+  -- the game has read it: the game works each size out again when it needs it (cheaply), and finds nothing of ours
+  -- in it when it empties it.
+  if type(view.GetTemplateExtent) == "function" and type(view.TemplateExtentCache) == "table" then
+    hooksecurefunc(view, "GetTemplateExtent", function(self, name)
+      local cache = self.TemplateExtentCache
+      if type(cache) == "table" and name ~= nil then cache[name] = nil end
+    end)
+  end
   -- (each card as the game draws it: after its own drawing, ours dressed; the cards are made after this, from the
   -- game's card with this hook in it)
   hooksecurefunc(FriendsListSocialCardMixin, "Initialize", function(frame, node) SocialCard(nil, frame, node) end)
