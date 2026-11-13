@@ -683,14 +683,25 @@ local socialFrames = {} -- (the cards drawn now with ours: frame -> node)
 local function SocialInfo(alt)
   local online = CFL.Online(alt.name)
   local facts = CFL.Facts(alt.name)
+  -- All on the card's top line, as the 1.x list: "Name, Level 26 Priest", the name in its class color when online
+  -- (the game wraps it in its own color: the class's, inside, shows); no character line (the name not twice); the
+  -- zone or when last seen on the line under it
+  local shown = alt.name
+  if online then
+    shown = ClassColored(alt.name, facts.class)
+    if facts.level and facts.class then
+      shown = shown .. ", " .. (FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class))
+    end
+  end
+  local character = nil
   local levels = Enum and Enum.BattleNetFriendLevel
   local raf = Enum and Enum.RafLinkType
   return {
-    accountName = alt.name, battleTag = "", note = "", friendTags = {}, isFavorite = false, isAFK = false,
+    accountName = shown, battleTag = "", note = "", friendTags = {}, isFavorite = false, isAFK = false,
     isDND = false, customMessage = "", customMessageTime = 0, rafLinkType = raf and raf.None or 0,
     friendLevel = levels and levels.Title, lastOnlineTime = (not online and facts.at) or 0,
     gameAccountInfo = {
-      isOnline = online, characterName = alt.name, characterLevel = facts.level,
+      isOnline = online, characterName = character, characterLevel = facts.level,
       className = facts.class and ClassName(facts.class) or nil, classFilename = facts.class,
       areaName = online and (facts.zone or L.ONLINE) or nil, richPresence = facts.zone,
       clientProgram = online and (BNET_CLIENT_WOW or "WoW") or "", wowProjectID = WOW_PROJECT_ID,
@@ -761,13 +772,6 @@ local function DressCard(frame, alt)
   local catcher = CFL.Catcher(frame)
   catcher.alt = alt
   catcher:Show()
-  -- (online: its name in its class's color, on both lines of the card)
-  local facts = CFL.Facts(alt.name)
-  if CFL.Online(alt.name) and facts.class then
-    local colored = ClassColored(alt.name, facts.class)
-    if frame.FriendName then frame.FriendName:SetText(colored) end
-    if frame.Name then frame.Name:SetText(colored) end
-  end
 end
 
 -- Each card as the list draws it: ours dressed; a Battle.net friend's as the game made it (its party button back
