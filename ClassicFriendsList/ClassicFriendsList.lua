@@ -170,6 +170,19 @@ local function ClassName(class)
   return class and (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[class]) or class
 end
 
+-- A name in its class's color (the game's own class colors), when its class is known
+local function ClassColored(text, class)
+  if type(class) ~= "string" or class == "" then return text end
+  local ok, color = pcall(function()
+    return (C_ClassColor and C_ClassColor.GetClassColor and C_ClassColor.GetClassColor(class))
+      or (RAID_CLASS_COLORS and RAID_CLASS_COLORS[class])
+  end)
+  if not ok or type(color) ~= "table" then return text end
+  if color.WrapTextInColorCode then return color:WrapTextInColorCode(text) end
+  if type(color.r) ~= "number" then return text end
+  return ("|cff%02x%02x%02x%s|r"):format(math.floor(color.r * 255 + 0.5), math.floor(color.g * 255 + 0.5), math.floor(color.b * 255 + 0.5), text)
+end
+
 local function Ago(at)
   if type(at) ~= "number" or at <= 0 or not time then return nil end
   local seconds = math.max(60, time() - at)
@@ -541,7 +554,7 @@ local function Tip(catcher)
   if not alt then return end
   local facts = CFL.Facts(alt.name)
   GameTooltip:SetOwner(catcher, "ANCHOR_RIGHT")
-  GameTooltip:SetText(alt.name, 1, 0.82, 0)
+  GameTooltip:SetText(ClassColored(alt.name, facts.class), 1, 0.82, 0)
   if facts.level and facts.class then
     GameTooltip:AddLine((FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class)), 1, 1, 1)
   end
@@ -611,7 +624,7 @@ function CFL.DrawRow(button, entry)
   local nameText, info = alt.name, nil
   if online then
     if facts.level and facts.class then
-      nameText = alt.name .. ", " .. (FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class))
+      nameText = ClassColored(alt.name, facts.class) .. ", " .. (FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class))
     end
     info = facts.zone or L.ONLINE
   else
@@ -748,6 +761,13 @@ local function DressCard(frame, alt)
   local catcher = CFL.Catcher(frame)
   catcher.alt = alt
   catcher:Show()
+  -- (online: its name in its class's color, on both lines of the card)
+  local facts = CFL.Facts(alt.name)
+  if CFL.Online(alt.name) and facts.class then
+    local colored = ClassColored(alt.name, facts.class)
+    if frame.FriendName then frame.FriendName:SetText(colored) end
+    if frame.Name then frame.Name:SetText(colored) end
+  end
 end
 
 -- Each card as the list draws it: ours dressed; a Battle.net friend's as the game made it (its party button back
