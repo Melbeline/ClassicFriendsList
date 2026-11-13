@@ -652,102 +652,159 @@ local function Hook()
 end
 
 ---------------------------------------------------------------------------
--- The game's new social window (WoW Forever's friends window when its server turns it on: the default UI's). Its own
--- list is left alone: a line of an addon's in it, and the game refuses it its own friend search after ("blocked").
--- The characters show beside it instead, in a panel of ours along its right side while its friends page shows, in the
--- 1.x list's look: online first, "Name, Level 26 Priest" and the zone, or grey with when last seen; the tooltip and
--- right-click menu of the list; the mouse wheel scrolls it.
+-- The game's new social window (WoW Forever's friends window when its server turns it on: the default UI's): the
+-- characters in its friends list, on the game's own cards, after the Battle.net friends online and before those
+-- offline (as the 1.x list). Put in the list as the game builds it, before the game lays it out: laid out from an
+-- addon's code, the list's size cache would be the addon's, and the game would then refuse its own friend search
+-- ("blocked"). A Battle.net card always comes before them (after the first one when none is online), so that the
+-- game's card size is the game's own. Each card drawn by the game from what is known of the character; the mouse on
+-- a layer of ours (tooltip, right-click menu), the Battle.net party and summon buttons hidden. The search box filters
+-- them too. A change: the cards drawn again in place, the list rebuilt only when their number changes.
 ---------------------------------------------------------------------------
-local PANEL_W, ROW_H, HEAD_H, PANEL_GAP = 300, 34, 34, 72
-local panel, panelRows, panelOffset = nil, {}, 0
+local FRIENDS_HEADER = 2 -- (the game's FriendsListHeaderType.Friends: its "Friends List" section)
+local socialView
+local socialNodes = {} -- (our cards in the list shown, in order)
+local socialFrames = {} -- (the cards drawn now with ours: frame -> node)
 
-local function SocialPage() return SocialUIFrame and SocialUIFrame.FriendsList end
-
-local function PanelRow(i)
-  local row = panelRows[i]
-  if row then return row end
-  row = CreateFrame("Button", nil, panel)
-  row:SetHeight(ROW_H)
-  row:SetPoint("TOPLEFT", panel, "TOPLEFT", 12, -HEAD_H - (i - 1) * (ROW_H + 2))
-  row:SetPoint("RIGHT", panel, "RIGHT", -12, 0)
-  row.background = row:CreateTexture(nil, "BACKGROUND")
-  row.background:SetAllPoints()
-  row.status = row:CreateTexture(nil, "ARTWORK")
-  row.status:SetSize(16, 16)
-  row.status:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -4)
-  row.name = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-  row.name:SetPoint("TOPLEFT", row.status, "TOPRIGHT", 4, 0)
-  row.name:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-  row.name:SetJustifyH("LEFT")
-  row.info = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-  row.info:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -3)
-  row.info:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-  row.info:SetJustifyH("LEFT")
-  row.info:SetTextColor(0.486, 0.518, 0.541)
-  panelRows[i] = row
-  return row
+-- What the game's card reads of a friend, for a character
+local function SocialInfo(alt)
+  local online = CFL.Online(alt.name)
+  local facts = CFL.Facts(alt.name)
+  local levels = Enum and Enum.BattleNetFriendLevel
+  local raf = Enum and Enum.RafLinkType
+  return {
+    accountName = alt.name, battleTag = "", note = "", friendTags = {}, isFavorite = false, isAFK = false,
+    isDND = false, customMessage = "", customMessageTime = 0, rafLinkType = raf and raf.None or 0,
+    friendLevel = levels and levels.Title, lastOnlineTime = (not online and facts.at) or 0,
+    gameAccountInfo = {
+      isOnline = online, characterName = alt.name, characterLevel = facts.level,
+      className = facts.class and ClassName(facts.class) or nil, classFilename = facts.class,
+      areaName = online and (facts.zone or L.ONLINE) or nil, richPresence = facts.zone,
+      clientProgram = online and (BNET_CLIENT_WOW or "WoW") or "", wowProjectID = WOW_PROJECT_ID,
+      factionName = UnitFactionGroup("player"), realmID = 0, isInCurrentRegion = true,
+      isGameAFK = false, isGameBusy = false,
+    },
+  }
 end
 
-local function UpdatePanel()
-  local page = SocialPage()
-  if not (panel and page and page:IsVisible()) or off then
-    if panel then panel:Hide() end
+local function SocialMatches(alt)
+  local bar = socialView and socialView.FilterBar and socialView.FilterBar.SearchBar
+  local ok, text = pcall(function() return bar and bar:GetText() end)
+  if not ok or type(text) ~= "string" or issecret(text) or text == "" then return true end
+  return alt.name:lower():find(text:lower(), 1, true) ~= nil
+end
+
+local function SocialAlts()
+  local alts = {}
+  for _, alt in ipairs(Sorted()) do
+    if not GameFriend(alt.name) and SocialMatches(alt) then alts[#alts + 1] = alt end
+  end
+  return alts
+end
+
+-- The "Friends List" section of the list, and where ours go in it: before its first friend offline, after its first
+-- card when none is online; nil without a card in it
+local function SocialSpot(provider)
+  local root = provider and provider.GetRootNode and provider:GetRootNode()
+  local section
+  for _, node in ipairs(root and root:GetNodes() or {}) do
+    local data = node:GetData()
+    if type(data) == "table" and data.headerType == FRIENDS_HEADER then section = node end
+  end
+  if not section then return nil end
+  local kids, firstCard, spot = section:GetNodes(), nil, nil
+  for i, node in ipairs(kids) do
+    local data = node:GetData()
+    local game = type(data) == "table" and not data.classicFriend and type(data.accountInfo) == "table"
+      and data.accountInfo.gameAccountInfo
+    if game then
+      firstCard = firstCard or i
+      if not game.isOnline then spot = i break end
+    end
+  end
+  if not firstCard then return nil end
+  if not spot then spot = #kids + 1 end
+  if spot == firstCard then spot = firstCard + 1 end
+  return section, spot
+end
+
+local function SocialInsert(provider)
+  socialNodes = {}
+  if off or not socialView then return end
+  local alts = SocialAlts()
+  if #alts == 0 then return end
+  local section, spot = SocialSpot(provider)
+  if not section then return end
+  for i, alt in ipairs(alts) do
+    socialNodes[i] = section:InsertNodeAtIndex({ classicFriend = alt, accountInfo = SocialInfo(alt) }, spot + i - 1)
+  end
+end
+
+-- A card of ours: the mouse layer on it, the Battle.net party and summon buttons hidden
+local function DressCard(frame, alt)
+  if frame.PartyButton then frame.PartyButton:Hide() end
+  if frame.RAFSummonButton then frame.RAFSummonButton:Hide() end
+  frame.classicFriendHid = true
+  local catcher = CFL.Catcher(frame)
+  catcher.alt = alt
+  catcher:Show()
+end
+
+-- Each card as the list draws it: ours dressed; a Battle.net friend's as the game made it (its party button back
+-- when the card was ours before)
+local function SocialCard(_, frame, node)
+  local data = node and node.GetData and node:GetData()
+  local alt = type(data) == "table" and data.classicFriend
+  if not alt then
+    socialFrames[frame] = nil
+    if frame.classicFriend then frame.classicFriend:Hide(); frame.classicFriend.alt = nil end
+    if frame.classicFriendHid and frame.PartyButton then frame.PartyButton:Show() end
+    frame.classicFriendHid = nil
     return
   end
-  local alts, online = {}, 0
-  for _, alt in ipairs(Sorted()) do
-    if not GameFriend(alt.name) then
-      alts[#alts + 1] = alt
-      if CFL.Online(alt.name) then online = online + 1 end
-    end
-  end
-  if #alts == 0 then panel:Hide() return end
-  panel.title:SetText(L.SOCIAL_HEADER:format(online, #alts))
-  local height = panel:GetHeight()
-  local fits = math.max(1, math.floor(((height and height > 0 and height or 400) - HEAD_H - 12) / (ROW_H + 2)))
-  panelOffset = math.max(0, math.min(panelOffset, #alts - fits))
-  for i = 1, math.max(fits, #panelRows) do
-    local alt = i <= fits and alts[i + panelOffset]
-    if alt then
-      CFL.DrawRow(PanelRow(i), { buttonType = TYPE, alt = alt })
-    elseif panelRows[i] then
-      panelRows[i]:Hide()
-    end
-  end
-  panel:Show()
+  socialFrames[frame] = node
+  DressCard(frame, alt)
 end
 
-function CFL.SocialRefresh() if panel then UpdatePanel() end end
+-- What changed: the same number of characters, their cards drawn again in place (in the list's order: online
+-- first); another number, the list as the game built it with ours put in again
+function CFL.SocialRefresh()
+  if not (socialView and socialView:IsVisible()) then return end
+  local alts = SocialAlts()
+  if #alts == #socialNodes and #alts > 0 then
+    for i, node in ipairs(socialNodes) do
+      local data = node:GetData()
+      data.classicFriend, data.accountInfo = alts[i], SocialInfo(alts[i])
+    end
+    for frame, node in pairs(socialFrames) do
+      if frame.Initialize then pcall(frame.Initialize, frame, node) end
+      DressCard(frame, node:GetData().classicFriend)
+    end
+    return
+  end
+  local provider = socialView.ScrollBox and socialView.ScrollBox:GetDataProvider()
+  if not provider then return end
+  for i = #socialNodes, 1, -1 do
+    local node = socialNodes[i]
+    if node.parent and node.parent.Remove then pcall(node.parent.Remove, node.parent, node) end
+  end
+  SocialInsert(provider)
+end
 
 function CFL.HookSocial()
-  if panel then return true end
-  local page = SocialPage()
-  if not (page and page.HookScript and SocialUIFrame) then return false end
-  panel = CreateFrame("Frame", "ClassicFriendsListPanel", SocialUIFrame, "BackdropTemplate")
-  panel:SetWidth(PANEL_W)
-  panel:SetPoint("TOPLEFT", SocialUIFrame, "TOPRIGHT", PANEL_GAP, 0)
-  panel:SetPoint("BOTTOMLEFT", SocialUIFrame, "BOTTOMRIGHT", PANEL_GAP, 0)
-  panel:EnableMouse(true)
-  panel:EnableMouseWheel(true)
-  if panel.SetBackdrop then
-    panel:SetBackdrop(BACKDROP_DARK_DIALOG_32_32 or BACKDROP_DIALOG_32_32 or {
-      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-      edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-      tile = true, tileEdge = true, tileSize = 32, edgeSize = 32,
-      insets = { left = 11, right = 12, top = 12, bottom = 11 },
-    })
-  end
-  panel.title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-  panel.title:SetPoint("TOP", panel, "TOP", 0, -14)
-  panel:SetScript("OnMouseWheel", function(_, delta)
-    panelOffset = math.max(0, panelOffset - delta)
-    UpdatePanel()
-  end)
-  panel:Hide()
-  CFL.panel = panel
-  page:HookScript("OnShow", UpdatePanel)
-  page:HookScript("OnHide", function() panel:Hide() end)
-  if page:IsVisible() then UpdatePanel() end
+  if socialView then return true end
+  local view = SocialUIFrame and SocialUIFrame.FriendsList
+  local box = view and view.ScrollBox
+  local events = ScrollBoxListMixin and ScrollBoxListMixin.Event
+  if not (box and box.RegisterCallback and events and view.InsertFriendsIntoDataProvider) then return false end
+  socialView = view
+  -- (in the list the game builds, before it lays it out)
+  hooksecurefunc(view, "InsertFriendsIntoDataProvider", function(_, provider) SocialInsert(provider) end)
+  box:RegisterCallback(events.OnInitializedFrame, SocialCard, CFL)
+  box:RegisterCallback(events.OnReleasedFrame, function(_, frame)
+    socialFrames[frame] = nil
+    if frame.classicFriend then frame.classicFriend:Hide(); frame.classicFriend.alt = nil end
+  end, CFL)
   return true
 end
 
