@@ -31,6 +31,8 @@ local function Normal(name)
   if type(name) ~= "string" or issecret(name) then return nil end
   name = name:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
   if name == "" or #name > NAME_MAX then return nil end
+  -- (each word with its capital, as the game writes a name: "Elle woods" typed, "Elle Woods" kept)
+  name = (name:gsub("(%S)(%S*)", function(first, rest) return first:upper() .. rest end))
   return name
 end
 
@@ -38,7 +40,8 @@ local function List()
   if not db then return nil end
   if type(db.friends) ~= "table" then db.friends = {} end
   for key, alt in pairs(db.friends) do
-    if type(key) ~= "string" or type(alt) ~= "table" or not Normal(alt.name) then db.friends[key] = nil end
+    if type(key) ~= "string" or type(alt) ~= "table" or not Normal(alt.name) then db.friends[key] = nil
+    else alt.name = Normal(alt.name) end
   end
   return db.friends
 end
@@ -157,6 +160,21 @@ local function Sexes()
   if type(store.sexes) ~= "table" then store.sexes = {} end
   return store.sexes
 end
+-- One's own characters' level and class, kept for the account as each logs in and levels up (another of them
+-- shows its level and class, its class color, even before its addon answers)
+local function Mine()
+  if not db then return nil end
+  if type(db.chars) ~= "table" then db.chars = {} end
+  return db.chars
+end
+local function KeepMe(level)
+  local me, mine = FullName(), Mine()
+  if not (me and mine) then return end
+  local _, class = UnitClass("player")
+  mine[Key(me)] = { level = tonumber(level) or (UnitLevel and UnitLevel("player")), class = class, at = time and time() }
+end
+CFL.KeepMe = KeepMe
+
 local function SexOf(name)
   local sexes = Sexes()
   return sexes and sexes[Key(name)]
@@ -178,6 +196,8 @@ function CFL.Facts(name)
     if alt.zone and CFL.Online(name) then facts.zone = alt.zone end
     if type(alt.seen) == "number" then facts.at = alt.seen end
   end
+  local own = (Mine() or {})[Key(name)]
+  if type(own) == "table" and not facts.level then facts.level, facts.class = own.level, own.class end
   facts.sex = (type(alt) == "table" and alt.sex) or SexOf(name)
   return facts
 end
@@ -1163,6 +1183,8 @@ probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, ...)
       local sex = tonumber(text:match("^S|(%d)$") or "")
       if sex then KeepSex(alt, own, sex) end
     end
+  elseif event == "PLAYER_LEVEL_UP" then
+    KeepMe(a1)
   elseif event == "PLAYER_TARGET_CHANGED" then
     NoteUnit("target")
   elseif event == "UPDATE_MOUSEOVER_UNIT" then
@@ -1206,7 +1228,9 @@ local function StartProbes()
     SocialUIFrame:HookScript("OnShow", function() if GetTime() >= pausedUntil then AskAll() end end)
   end
   probeEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
-  for _, event in ipairs({ "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "GROUP_ROSTER_UPDATE" }) do probeEvents:RegisterEvent(event) end
+  for _, event in ipairs({ "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "GROUP_ROSTER_UPDATE", "PLAYER_LEVEL_UP" }) do
+    probeEvents:RegisterEvent(event)
+  end
   C_Timer.NewTicker(1, AskServer)
 end
 
@@ -1272,6 +1296,7 @@ events:SetScript("OnEvent", function(self, event, name)
   -- (this character's sex kept for the whole account: its other characters show its class's name as it is)
   local me, sexes = WholeName("player"), Sexes()
   if me and sexes and UnitSex then sexes[Key(me)] = UnitSex("player") end
+  KeepMe()
   if not db then
     if type(ClassicFriendsListDB) ~= "table" then ClassicFriendsListDB = {} end
     db = ClassicFriendsListDB

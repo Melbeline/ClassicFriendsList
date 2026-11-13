@@ -23,6 +23,8 @@ Characters in the friends list, the classic way, for WoW Forever. Forever's serv
 - **Aussitôt entre deux joueurs qui ont ClassicFriendsList ou Clara** et chacun l'autre dans sa liste.
   - **Les deux addons parlent la même langue**, les mêmes messages. L'addon salue dès que le monde s'affiche (moins d'une seconde), répond aussitôt aux saluts avec niveau, classe et zone, et dit au revoir à la déconnexion (pas pendant un `/reload`).
   - Il ne répond qu'aux personnages de sa liste.
+- **Tes propres personnages** gardent leur niveau et leur classe (et leur sexe) à chaque connexion et montée de niveau, pour tout le compte : un autre de tes personnages s'affiche avec son niveau, sa classe et sa couleur avant même que son addon réponde. Connecte-toi une fois sur chacun avec ClassicFriendsList pour qu'il soit connu.
+- **Les noms prennent une majuscule à chaque mot** (« elle woods » tapé, « Elle Woods » gardé), comme le jeu les écrit.
 - **Connexions et déconnexions** : le chat les annonce comme pour un ami (« … s'est connecté », « … s'est déconnecté »), avec une dizaine de secondes de retard au plus, aussitôt entre deux addons.
 - **Ajouts et retraits** : une ligne système jaune, comme pour un ami (« Melbeline Moon added to friends. », « … is already your friend. », « … removed from friends. »), avec les mots du jeu dans sa langue. Le nom prend l'écriture du jeu (majuscules) dès qu'il est entendu en entier.
 - **`/cfl`** (ou `/classicfriendslist`) : `/cfl add Prénom Nom`, `/cfl remove Prénom Nom`, `/cfl list`.
@@ -46,6 +48,7 @@ Characters in the friends list, the classic way, for WoW Forever. Forever's serv
   - The server's "No player named …" means offline, and that line is hidden. Silence means online.
   - A character heard in the chat is online at once.
 - **At once between two players with ClassicFriendsList or Clara** (the same messages): a hello, its answer (level, class, zone) and a goodbye at logout (not at a reload).
+- **Your own characters** keep their level, class (and sex) for the account as each logs in and levels up: another of yours shows them before its addon answers. Names take a capital on each word ("Elle Woods").
 - **Comings and goings**, additions and removals: said in the chat as the game says them for a friend.
 - **`/cfl add First Surname`**, **`/cfl remove First Surname`**, **`/cfl list`**. **`/rl`** reloads the interface (as `/reload`).
 - **With Clara loaded**, ClassicFriendsList stays off: Clara has the same module. One chat line says so.
