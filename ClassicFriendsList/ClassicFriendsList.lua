@@ -148,11 +148,26 @@ function CFL.Known(name)
   return startedAt ~= nil and GetTime() - startedAt > KNOWN_AFTER
 end
 
+-- Its sex (for the class's name, "Prêtresse" for a woman as the game says it since TBC): 2 male, 3 female, by
+-- Key(name), for the whole account: one's own characters say theirs as they log in, a character's own addon says it
+-- with its answer, the game tells it of one seen (in the chat, the group, the target, under the mouse)
+local function Sexes()
+  local store = db
+  if type(store) ~= "table" then return nil end
+  if type(store.sexes) ~= "table" then store.sexes = {} end
+  return store.sexes
+end
+local function SexOf(name)
+  local sexes = Sexes()
+  return sexes and sexes[Key(name)]
+end
+
 function CFL.Facts(name)
   local facts = {}
   if IsMe(name) then
     facts.level = UnitLevel and UnitLevel("player")
     facts.class = select(2, UnitClass("player"))
+    facts.sex = UnitSex and UnitSex("player")
     facts.zone = GetRealZoneText and GetRealZoneText() or (GetZoneText and GetZoneText())
     return facts
   end
@@ -163,11 +178,14 @@ function CFL.Facts(name)
     if alt.zone and CFL.Online(name) then facts.zone = alt.zone end
     if type(alt.seen) == "number" then facts.at = alt.seen end
   end
+  facts.sex = (type(alt) == "table" and alt.sex) or SexOf(name)
   return facts
 end
 
-local function ClassName(class)
-  return class and (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[class]) or class
+local function ClassName(class, sex)
+  if not class then return nil end
+  local names = sex == 3 and LOCALIZED_CLASS_NAMES_FEMALE or LOCALIZED_CLASS_NAMES_MALE
+  return (names and names[class]) or (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[class]) or class
 end
 
 -- A name in its class's color (the game's own class colors), when its class is known
@@ -556,7 +574,7 @@ local function Tip(catcher)
   GameTooltip:SetOwner(catcher, "ANCHOR_RIGHT")
   GameTooltip:SetText(ClassColored(alt.name, facts.class), 1, 0.82, 0)
   if facts.level and facts.class then
-    GameTooltip:AddLine((FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class)), 1, 1, 1)
+    GameTooltip:AddLine((FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class, facts.sex)), 1, 1, 1)
   end
   if CFL.Online(alt.name) then
     GameTooltip:AddLine(facts.zone or L.ONLINE, 0.2, 1, 0.2)
@@ -624,7 +642,7 @@ function CFL.DrawRow(button, entry)
   local nameText, info = alt.name, nil
   if online then
     if facts.level and facts.class then
-      nameText = ClassColored(alt.name, facts.class) .. ", " .. (FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class))
+      nameText = ClassColored(alt.name, facts.class) .. ", " .. (FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class, facts.sex))
     end
     info = facts.zone or L.ONLINE
   else
@@ -690,7 +708,7 @@ local function SocialInfo(alt)
   if online then
     shown = ClassColored(alt.name, facts.class)
     if facts.level and facts.class then
-      shown = shown .. ", " .. (FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class))
+      shown = shown .. ", " .. (FRIENDS_LEVEL_TEMPLATE or "Level %d %s"):format(facts.level, ClassName(facts.class, facts.sex))
     end
   end
   local character = nil
@@ -702,7 +720,7 @@ local function SocialInfo(alt)
     friendLevel = levels and levels.Title, lastOnlineTime = (not online and facts.at) or 0,
     gameAccountInfo = {
       isOnline = online, characterName = character, characterLevel = facts.level,
-      className = facts.class and ClassName(facts.class) or nil, classFilename = facts.class,
+      className = facts.class and ClassName(facts.class, facts.sex) or nil, classFilename = facts.class,
       areaName = online and (facts.zone or L.ONLINE) or nil, richPresence = facts.zone,
       clientProgram = online and (BNET_CLIENT_WOW or "WoW") or "", wowProjectID = WOW_PROJECT_ID,
       factionName = UnitFactionGroup("player"), realmID = 0, isInCurrentRegion = true,
@@ -1057,13 +1075,53 @@ local function Answer(sender)
   local zone = (GetRealZoneText and GetRealZoneText()) or (GetZoneText and GetZoneText()) or ""
   if issecret(zone) or type(zone) ~= "string" then zone = "" end
   Whisper(sender, ("I|%d|%s|%s"):format(tonumber(level) or 0, class or "", (zone:gsub("|", ""))))
+  local sex = UnitSex and UnitSex("player")
+  if sex == 2 or sex == 3 then Whisper(sender, "S|" .. sex) end
+end
+
+-- A unit's whole name ("First Surname"), as the game's own names give it
+local function WholeName(unit)
+  local ok, name, surname = pcall(function()
+    if UnitNameUnmodified then return UnitNameUnmodified(unit) end
+    return UnitName(unit)
+  end)
+  if not ok or issecret(name) or type(name) ~= "string" or name == "" then return nil end
+  local consts = Constants and Constants.CharacterNameSeparatorConsts
+  local sep = consts and consts.CHARACTERNAME_SURNAME_SEPARATOR
+  if type(sep) == "string" and not issecret(surname) and type(surname) == "string" and surname ~= ""
+    and not name:find(sep, 1, true) then
+    return name .. sep .. surname
+  end
+  return name
+end
+
+local function KeepSex(alt, own, sex)
+  if sex ~= 2 and sex ~= 3 then return end
+  local sexes = Sexes()
+  if sexes then sexes[own] = sex end
+  if alt and alt.sex ~= sex then
+    alt.sex = sex
+    CFL.Refresh()
+  end
+end
+
+-- One seen (target, under the mouse, in the group): its sex, the game's
+local function NoteUnit(unit)
+  local ok, player = pcall(UnitIsPlayer, unit)
+  if not ok or issecret(player) or not player then return end
+  local name = WholeName(unit)
+  if not name then return end
+  local alt, own = Listed(Key(name))
+  if not alt then return end
+  local okSex, sex = pcall(UnitSex, unit)
+  if okSex and not issecret(sex) then KeepSex(alt, own, sex) end
 end
 
 local CHAT_PRESENCE = { "CHAT_MSG_WHISPER", "CHAT_MSG_CHANNEL", "CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_EMOTE",
   "CHAT_MSG_GUILD", "CHAT_MSG_OFFICER", "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER", "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER" }
 
 local probeEvents = CreateFrame("Frame")
-probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
+probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, ...)
   if event == "PLAYER_LOGOUT" then
     Goodbye()
   elseif event == "PLAYER_ENTERING_WORLD" then
@@ -1102,13 +1160,28 @@ probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
         alt.levelAt = time and time() or nil
         CFL.Refresh()
       end
+      local sex = tonumber(text:match("^S|(%d)$") or "")
+      if sex then KeepSex(alt, own, sex) end
     end
+  elseif event == "PLAYER_TARGET_CHANGED" then
+    NoteUnit("target")
+  elseif event == "UPDATE_MOUSEOVER_UNIT" then
+    NoteUnit("mouseover")
+  elseif event == "GROUP_ROSTER_UPDATE" then
+    local raid = IsInRaid and IsInRaid()
+    for i = 1, (GetNumGroupMembers and GetNumGroupMembers() or 0) do NoteUnit((raid and "raid" or "party") .. i) end
   else -- heard in the chat
     if issecret(a2) or type(a2) ~= "string" or a2 == "" then return end
     local alt, own = Listed(Key(a2))
     if alt then
       Respell(alt, a2)
       SetVerdict(own, true)
+      -- (its sex, from the game's word on its sender)
+      local guid = select(8, ...)
+      if type(guid) == "string" and not issecret(guid) and GetPlayerInfoByGUID then
+        local okInfo, _, _, _, _, sex = pcall(GetPlayerInfoByGUID, guid)
+        if okInfo and not issecret(sex) then KeepSex(alt, own, sex) end
+      end
     end
   end
 end)
@@ -1133,6 +1206,7 @@ local function StartProbes()
     SocialUIFrame:HookScript("OnShow", function() if GetTime() >= pausedUntil then AskAll() end end)
   end
   probeEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+  for _, event in ipairs({ "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "GROUP_ROSTER_UPDATE" }) do probeEvents:RegisterEvent(event) end
   C_Timer.NewTicker(1, AskServer)
 end
 
@@ -1195,6 +1269,9 @@ events:SetScript("OnEvent", function(self, event, name)
     return
   end
   startedAt = GetTime()
+  -- (this character's sex kept for the whole account: its other characters show its class's name as it is)
+  local me, sexes = WholeName("player"), Sexes()
+  if me and sexes and UnitSex then sexes[Key(me)] = UnitSex("player") end
   if not db then
     if type(ClassicFriendsListDB) ~= "table" then ClassicFriendsListDB = {} end
     db = ClassicFriendsListDB
