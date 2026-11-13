@@ -1056,6 +1056,14 @@ local function StartProbes()
 end
 
 ---------------------------------------------------------------------------
+-- /rl: the interface reloaded (as /reload); with Clara loaded too
+---------------------------------------------------------------------------
+SLASH_CLASSICFRIENDSLISTRELOAD1 = "/rl"
+SlashCmdList.CLASSICFRIENDSLISTRELOAD = function()
+  if C_UI and C_UI.Reload then C_UI.Reload() else ReloadUI() end
+end
+
+---------------------------------------------------------------------------
 -- /cfl add First Surname, /cfl remove First Surname, /cfl list
 ---------------------------------------------------------------------------
 SLASH_CLASSICFRIENDSLIST1 = "/cfl"

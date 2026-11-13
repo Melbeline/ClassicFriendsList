@@ -26,6 +26,7 @@ Characters in the friends list, the classic way, for WoW Forever. Forever's serv
 - **Connexions et déconnexions** : le chat les annonce comme pour un ami (« … s'est connecté », « … s'est déconnecté »), avec une dizaine de secondes de retard au plus, aussitôt entre deux addons.
 - **Ajouts et retraits** : une ligne système jaune, comme pour un ami (« Melbeline Moon added to friends. », « … is already your friend. », « … removed from friends. »), avec les mots du jeu dans sa langue. Le nom prend l'écriture du jeu (majuscules) dès qu'il est entendu en entier.
 - **`/cfl`** (ou `/classicfriendslist`) : `/cfl add Prénom Nom`, `/cfl remove Prénom Nom`, `/cfl list`.
+- **`/rl`** recharge l'interface (comme `/reload`).
 - **Avec Clara** : Clara contient déjà ce module, avec la même liste, les mêmes lignes et la même fenêtre. Si Clara est chargé, ClassicFriendsList **reste éteint** (une ligne dans le chat le dit) et garde sa propre liste pour le jour où Clara n'est plus là.
 - La liste est gardée dans `ClassicFriendsListDB`, pour tout le compte.
 
@@ -46,7 +47,7 @@ Characters in the friends list, the classic way, for WoW Forever. Forever's serv
   - A character heard in the chat is online at once.
 - **At once between two players with ClassicFriendsList or Clara** (the same messages): a hello, its answer (level, class, zone) and a goodbye at logout (not at a reload).
 - **Comings and goings**, additions and removals: said in the chat as the game says them for a friend.
-- **`/cfl add First Surname`**, **`/cfl remove First Surname`**, **`/cfl list`**.
+- **`/cfl add First Surname`**, **`/cfl remove First Surname`**, **`/cfl list`**. **`/rl`** reloads the interface (as `/reload`).
 - **With Clara loaded**, ClassicFriendsList stays off: Clara has the same module. One chat line says so.
 
 Install: copy the `ClassicFriendsList` folder into `World of Warcraft/_forever_/Interface/AddOns/`.
