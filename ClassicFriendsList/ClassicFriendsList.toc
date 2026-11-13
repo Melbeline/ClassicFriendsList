@@ -4,7 +4,7 @@
 ## Notes-frFR: Des personnages dans la liste d'amis, à l'ancienne (WoW Forever) : connectés ou non, niveau, classe, zone ; la fenêtre Ajouter un ami de la 1.15, avec une ligne pour les personnages. Parle avec Clara.
 ## Notes-deDE: Charaktere in der Freundesliste, klassisch (WoW Forever): online oder offline, Stufe, Klasse, Zone; das Freund-hinzufügen-Fenster von 1.15 mit einer Zeile für Charaktere. Spricht mit Clara.
 ## Author: Melbeline
-## Version: 1.0.8
+## Version: 1.0.9
 ## SavedVariables: ClassicFriendsListDB
 ## Category: Social
 ## IconTexture: Interface\FriendsFrame\PlusManz-PlusManz
