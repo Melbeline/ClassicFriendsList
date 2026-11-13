@@ -1149,6 +1149,16 @@ local function WholeName(unit)
   return name
 end
 
+-- Its class (and level) from the game, for one seen or heard: its class color even without an addon of its own
+local function KeepClass(alt, class, level)
+  if issecret(class) or issecret(level) then return end
+  local changed = false
+  if type(class) == "string" and class ~= "" and alt.class ~= class then alt.class, changed = class, true end
+  level = tonumber(level)
+  if level and level > 0 and alt.level ~= level then alt.level, alt.levelAt, changed = level, time and time() or nil, true end
+  if changed then CFL.Refresh() end
+end
+
 local function KeepSex(alt, own, sex)
   if sex ~= 2 and sex ~= 3 then return end
   local sexes = Sexes()
@@ -1169,6 +1179,9 @@ local function NoteUnit(unit)
   if not alt then return end
   local okSex, sex = pcall(UnitSex, unit)
   if okSex and not issecret(sex) then KeepSex(alt, own, sex) end
+  local okClass, _, class = pcall(UnitClass, unit)
+  local okLevel, level = pcall(UnitLevel, unit)
+  KeepClass(alt, okClass and class or nil, okLevel and level or nil)
 end
 
 local CHAT_PRESENCE = { "CHAT_MSG_WHISPER", "CHAT_MSG_CHANNEL", "CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_EMOTE",
@@ -1197,7 +1210,18 @@ probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, ...)
     if prefix ~= PROBE_PREFIX or channel ~= "WHISPER" then return end
     if issecret(text) or issecret(sender) or type(text) ~= "string" or type(sender) ~= "string" then return end
     local alt, own = Listed(Key(sender))
-    if not alt then return end -- (only the characters in this list: answered and heard)
+    if not alt then
+      -- A player not in this list asking: answered all the same (its level, class and zone are what /who tells
+      -- anyone), so that a friend who has this one in their list sees it, even while it has not added them back
+      if text == "?" then
+        local key, now = Key(sender), GetTime()
+        if key and not (replied[key] and now - replied[key] < REPLY_EVERY) then
+          replied[key] = now
+          Answer(sender)
+        end
+      end
+      return
+    end
     Respell(alt, sender)
     alt.clara = true -- (it has the addon or Clara: greeted first, told goodbye)
     if text == "!" then SetVerdict(own, false) return end -- (its goodbye)
@@ -1235,8 +1259,9 @@ probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, ...)
       -- (its sex, from the game's word on its sender)
       local guid = select(8, ...)
       if type(guid) == "string" and not issecret(guid) and GetPlayerInfoByGUID then
-        local okInfo, _, _, _, _, sex = pcall(GetPlayerInfoByGUID, guid)
+        local okInfo, _, class, _, _, sex = pcall(GetPlayerInfoByGUID, guid)
         if okInfo and not issecret(sex) then KeepSex(alt, own, sex) end
+        if okInfo then KeepClass(alt, class, nil) end
       end
     end
   end
