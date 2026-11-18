@@ -31,8 +31,14 @@ local function Normal(name)
   if type(name) ~= "string" or issecret(name) then return nil end
   name = name:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
   if name == "" or #name > NAME_MAX then return nil end
-  -- (each word with its capital, as the game writes a name: "Elle woods" typed, "Elle Woods" kept)
-  name = (name:gsub("(%S)(%S*)", function(first, rest) return first:upper() .. rest end))
+  -- (each word with its capital, as the game writes a name: "Elle woods" typed, "Elle Woods" kept). Its first letter
+  -- whole: an accented one is two bytes ("é"), and the game's capitals, which read UTF-8, broke its first byte taken
+  -- alone ("Miss ▯milia"); "émilia" typed, "Émilia" kept.
+  name = (name:gsub("%S+", function(word)
+    local first, rest = word:match("^([%z\1-\127\194-\244][\128-\191]*)(.*)$")
+    if not first then return word end
+    return first:upper() .. rest
+  end))
   return name
 end
 
