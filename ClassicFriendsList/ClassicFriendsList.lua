@@ -1,7 +1,8 @@
 -- ClassicFriendsList - characters in the friends list, the classic way (WoW Forever). The server keeps no character
 -- friends there (Battle.net friends only), and its list takes none of the account's own characters: this addon keeps
 -- a list of characters instead (for the whole account: one's own and friends'), and shows them in the friends
--- window, above the offline Battle.net friends, in the game's look: online or offline (see "Online or not" below),
+-- window (WoW Forever's: in two sections of their own, online and offline, placed by the player; the older one: above
+-- the offline Battle.net friends), in the game's look: online or offline (see "Online or not" below),
 -- with their level, class and zone (from their own ClassicFriendsList or Clara) and when last seen. The game's Add
 -- Friend window in the 1.15 look, with two lines: the game's (a BattleTag, or a name the Forever way) and the
 -- addon's, that adds a character to this list. Over a row: its tooltip; right-click: whisper, invite or remove.
@@ -711,18 +712,48 @@ end
 
 ---------------------------------------------------------------------------
 -- The game's new social window (WoW Forever's friends window when its server turns it on: the default UI's): the
--- characters in its friends list, on the game's own cards, after the Battle.net friends online and before those
--- offline (as the 1.x list). Put in the list as the game builds it, before the game lays it out (never laid out from
--- the addon's code); the game's card-size cache, filled as it lays out our lines too, emptied after each read (else
--- the game would refuse its own friend search at its next refresh: an empty list). A Battle.net card always comes
--- before them (after the first one when none is online). Each card drawn by the game from what is known of the character; the mouse on
--- a layer of ours (tooltip, right-click menu), the Battle.net party and summon buttons hidden. The search box filters
--- them too. A change: the cards drawn again in place, the list rebuilt only when their number changes.
+-- characters in its friends list, in two sections of their own made as the game's own (a header, folded by a click
+-- and kept so), "Characters online" and "Characters offline", on the game's cards. By default after the Battle.net
+-- friends; the sections' order is the player's (see "The sections moved" below). Put in the list as the game builds
+-- it, before it lays it out; what shows changing (a character online or gone, one added, a section moved) the list
+-- is arranged again in place. The game's card-size cache, filled as it lays out our lines too, emptied after each
+-- read (else the game would refuse its own friend search at its next refresh: an empty list). Each card drawn by the
+-- game from what is known of the character; the mouse on a layer of ours (tooltip, right-click menu), the Battle.net
+-- party and summon buttons hidden. The search box filters them too.
 ---------------------------------------------------------------------------
-local FRIENDS_HEADER = 2 -- (the game's FriendsListHeaderType.Friends: its "Friends List" section)
+local HEADER_FAVORITES, HEADER_FRIENDS = 1, 2 -- (the game's FriendsListHeaderType: its two sections)
+local SECTIONS = { "favorites", "friends", "online", "offline" } -- (all of them, in their first order)
+local BNET = { favorites = true, friends = true }
+local OURS = { online = "cflOnline", offline = "cflOffline" } -- (our headers' types: the game keeps their fold)
 local socialView
-local socialNodes = {} -- (our cards in the list shown, in order)
+local socialNodes = { online = {}, offline = {} } -- (our cards in the list shown, per section, in order)
 local socialFrames = {} -- (the cards drawn now with ours: frame -> node)
+local arranged -- (the list last arranged here)
+
+local function IndexOf(list, value)
+  for i, v in ipairs(list) do if v == value then return i end end
+  return nil
+end
+
+-- The sections' order and our sections' folds (ClassicFriendsListDB.friendSections, for the whole WoW account): each section once,
+-- one unknown dropped, one missing put back at its first place
+local function SectionStore()
+  local sv = db
+  if type(sv) ~= "table" then return nil end
+  local store = sv.friendSections
+  if type(store) ~= "table" then store = {}; sv.friendSections = store end
+  local order = {}
+  for _, key in ipairs(type(store.order) == "table" and store.order or {}) do
+    if IndexOf(SECTIONS, key) and not IndexOf(order, key) then order[#order + 1] = key end
+  end
+  for i, key in ipairs(SECTIONS) do
+    if not IndexOf(order, key) then table.insert(order, math.min(i, #order + 1), key) end
+  end
+  store.order = order
+  if type(store.folded) ~= "table" then store.folded = {} end
+  return store
+end
+CFL.SectionStore = SectionStore
 
 -- What the game's card reads of a friend, for a character
 local function SocialInfo(alt)
@@ -763,50 +794,98 @@ local function SocialMatches(alt)
   return alt.name:lower():find(text:lower(), 1, true) ~= nil
 end
 
+-- The characters the list shows (the search box's), online and offline apart
 local function SocialAlts()
-  local alts = {}
+  local online, offline = {}, {}
   for _, alt in ipairs(Sorted()) do
-    if not GameFriend(alt.name) and SocialMatches(alt) then alts[#alts + 1] = alt end
-  end
-  return alts
-end
-
--- The "Friends List" section of the list, and where ours go in it: before its first friend offline, after its first
--- card when none is online; nil without a card in it
-local function SocialSpot(provider)
-  local root = provider and provider.GetRootNode and provider:GetRootNode()
-  local section
-  for _, node in ipairs(root and root:GetNodes() or {}) do
-    local data = node:GetData()
-    if type(data) == "table" and data.headerType == FRIENDS_HEADER then section = node end
-  end
-  if not section then return nil end
-  local kids, firstCard, spot = section:GetNodes(), nil, nil
-  for i, node in ipairs(kids) do
-    local data = node:GetData()
-    local game = type(data) == "table" and not data.classicFriend and type(data.accountInfo) == "table"
-      and data.accountInfo.gameAccountInfo
-    if game then
-      firstCard = firstCard or i
-      if not game.isOnline then spot = i break end
+    if not GameFriend(alt.name) and SocialMatches(alt) then
+      local list = CFL.Online(alt.name) and online or offline
+      list[#list + 1] = alt
     end
   end
-  if not firstCard then return nil end
-  if not spot then spot = #kids + 1 end
-  if spot == firstCard then spot = firstCard + 1 end
-  return section, spot
+  return online, offline
 end
 
-local function SocialInsert(provider)
-  socialNodes = {}
-  if off or not socialView then return end
-  local alts = SocialAlts()
-  if #alts == 0 then return end
-  local section, spot = SocialSpot(provider)
-  if not section then return end
-  for i, alt in ipairs(alts) do
-    socialNodes[i] = section:InsertNodeAtIndex({ classicFriend = alt, accountInfo = SocialInfo(alt) }, spot + i - 1)
+-- A section of the list (a line at its top): its key; nil for any other line
+local function SectionKey(node)
+  local data = node and node.GetData and node:GetData()
+  if type(data) ~= "table" or data.headerText == nil then return nil end
+  if data.cflSection then return data.cflSection end
+  if data.headerType == HEADER_FAVORITES then return "favorites" end
+  if data.headerType == HEADER_FRIENDS then return "friends" end
+  return nil
+end
+
+local function HeaderText(key, count)
+  return (key == "online" and L.SECTION_ONLINE or L.SECTION_OFFLINE):format(count)
+end
+
+-- A line made apart (in a list of its own), then given to ours: the whole change shown at once
+local function NewNode(provider, data)
+  local made = CreateTreeDataProvider and CreateTreeDataProvider()
+  if made then return made:Insert(data) end
+  local node = provider:Insert(data)
+  provider:GetRootNode():Remove(node, true)
+  return node
+end
+local function Adopt(node, parent, provider)
+  node.parent, node.dataProvider = parent, provider
+  for _, child in ipairs(node.nodes or {}) do Adopt(child, node, provider) end
+  return node
+end
+
+-- One of our sections: its header (folded as it was left), a spacer under it as the game's, its cards
+local function NewSection(provider, root, key, alts)
+  local section = NewNode(provider, { headerType = OURS[key], headerText = HeaderText(key, #alts), cflSection = key })
+  local store = SectionStore()
+  section.collapsed = store and store.folded[key] == true or nil
+  section:Insert({ isSpacer = true })
+  local cards = {}
+  for i, alt in ipairs(alts) do cards[i] = section:Insert({ classicFriend = alt, accountInfo = SocialInfo(alt) }) end
+  return Adopt(section, root, provider), cards
+end
+
+-- The list's sections in the player's order, ours made again, a spacer between two (as the game's); a list shown:
+-- laid out again once
+local function Arrange(provider)
+  if off then return end
+  local root = provider and provider.GetRootNode and provider:GetRootNode()
+  local nodes = root and root.GetNodes and root:GetNodes()
+  local store = SectionStore()
+  if type(nodes) ~= "table" or not store then return end
+  local sections, others = {}, {}
+  for _, node in ipairs(nodes) do
+    local key = SectionKey(node)
+    local data = node:GetData()
+    if key then
+      if BNET[key] then sections[key] = node end
+    elseif not (type(data) == "table" and data.isSpacer) then
+      others[#others + 1] = node -- (anything else of the game's: kept first, as it was)
+    end
   end
+  local online, offline = SocialAlts()
+  socialNodes = { online = {}, offline = {} }
+  if #online > 0 then sections.online, socialNodes.online = NewSection(provider, root, "online", online) end
+  if #offline > 0 then sections.offline, socialNodes.offline = NewSection(provider, root, "offline", offline) end
+  local lines = {}
+  for _, node in ipairs(others) do lines[#lines + 1] = node end
+  for _, key in ipairs(store.order) do
+    local section = sections[key]
+    if section then
+      if #lines > 0 then lines[#lines + 1] = Adopt(NewNode(provider, { isSpacer = true }), root, provider) end
+      lines[#lines + 1] = section
+    end
+  end
+  for i = #nodes, 1, -1 do nodes[i] = nil end
+  for i, node in ipairs(lines) do nodes[i] = node end
+  arranged = provider
+  if provider.Invalidate then provider:Invalidate() end
+end
+
+local function ShownProvider()
+  local box = socialView and socialView.ScrollBox
+  local provider = box and box.GetDataProvider and box:GetDataProvider()
+  return provider ~= nil and provider == arranged and provider or nil
 end
 
 -- A card of ours: the mouse layer on it, the Battle.net party and summon buttons hidden
@@ -835,10 +914,7 @@ local function SocialCard(_, frame, node)
   DressCard(frame, alt)
 end
 
--- What changed, while the list shows: our cards' text drawn again in place (in the list's order: online first),
--- nothing of the game's list touched (no line put in or taken out, none of its own drawing run from here: its friend
--- search would be refused after). A character added or taken off shows as the game builds its list again (the
--- window opened again, a Battle.net friend's news).
+-- A card of ours drawn again in place (the same characters online and offline: no line put in or taken out)
 local function Redraw(frame, node)
   local data = node:GetData()
   local alt = data.classicFriend
@@ -870,14 +946,21 @@ local function Redraw(frame, node)
   DressCard(frame, alt)
 end
 
+-- What changed, while the list shows: the same characters online and offline, their cards drawn again in place;
+-- else the list arranged again (a character coming online goes to its section at once)
 function CFL.SocialRefresh()
-  if not (socialView and socialView:IsVisible()) or #socialNodes == 0 then return end
-  local alts = SocialAlts()
-  for i, node in ipairs(socialNodes) do
-    local alt = alts[i]
-    if alt then
+  if not (socialView and socialView:IsVisible()) then return end
+  local provider = ShownProvider()
+  if not provider then return end
+  local online, offline = SocialAlts()
+  local now = { online = online, offline = offline }
+  for key, alts in pairs(now) do
+    if #alts ~= #socialNodes[key] then return Arrange(provider) end
+  end
+  for key, alts in pairs(now) do
+    for i, node in ipairs(socialNodes[key]) do
       local data = node:GetData()
-      data.classicFriend, data.accountInfo = alt, SocialInfo(alt)
+      data.classicFriend, data.accountInfo = alts[i], SocialInfo(alts[i])
     end
   end
   for frame, node in pairs(socialFrames) do
@@ -885,13 +968,386 @@ function CFL.SocialRefresh()
   end
 end
 
+---------------------------------------------------------------------------
+-- The sections moved: a padlock beside the window's X. Unlocked, each section (the Battle.net favorites and friends,
+-- and ours) is dragged by its header to where it goes among the others, the list scrolling by itself as it is pushed
+-- against its top or its bottom (faster the further past); the order is kept. Its right-click menu: the characters
+-- online, or offline, above the Battle.net friends (else after them), the first order back. Locked again as the
+-- window closes.
+---------------------------------------------------------------------------
+local LOCK = "Interface\\Buttons\\LockButton-"
+local SCROLL_ZONE = 28                    -- the list scrolls with the cursor this near its top or bottom, or past them
+local SCROLL_SLOW, SCROLL_FAST = 150, 1500 -- its speed in the list's units a second: at the zone's edge, pushed far
+local unlocked = false
+local lockButton, ghost, marker, driver
+local grips = setmetatable({}, { __mode = "k" }) -- (a header's frame -> its grip)
+local drag -- (the section dragged: { key =, shown =, slot = })
+
+local function Click() if SOUNDKIT and PlaySound then PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON) end end
+
+-- The list's sections in their order, as it shows
+local function ShownKeys()
+  local provider = ShownProvider()
+  local root = provider and provider:GetRootNode()
+  local keys = {}
+  for _, node in ipairs(root and root:GetNodes() or {}) do
+    local key = SectionKey(node)
+    if key then keys[#keys + 1] = key end
+  end
+  return keys
+end
+
+-- The order kept, after the sections shown were put in this order (those not shown left where they were)
+local function KeepShownOrder(shown)
+  local store = SectionStore()
+  if not store then return end
+  local out, n = {}, 0
+  for _, key in ipairs(store.order) do
+    if IndexOf(shown, key) then n = n + 1; out[#out + 1] = shown[n] else out[#out + 1] = key end
+  end
+  store.order = out
+end
+
+local function Rearrange()
+  local provider = ShownProvider()
+  if provider then Arrange(provider) end
+end
+
+-- Is this section of ours above the Battle.net friends? Put it there, or after them (online before offline)
+local function Above(key)
+  local store = SectionStore()
+  if not store then return false end
+  local order = store.order
+  return IndexOf(order, key) < math.min(IndexOf(order, "favorites"), IndexOf(order, "friends"))
+end
+CFL.SectionAbove = Above
+local function SetAbove(key, above)
+  local store = SectionStore()
+  if not store then return end
+  local order = store.order
+  table.remove(order, IndexOf(order, key))
+  local first = math.min(IndexOf(order, "favorites"), IndexOf(order, "friends"))
+  local last = math.max(IndexOf(order, "favorites"), IndexOf(order, "friends"))
+  local other = IndexOf(order, key == "online" and "offline" or "online")
+  local at
+  if above then
+    at = first
+    if key == "online" and other < first then at = other end
+  else
+    at = last + 1
+    if key == "offline" and other > last then at = other + 1 end
+  end
+  table.insert(order, at, key)
+  Rearrange()
+end
+CFL.SetSectionAbove = SetAbove
+local function ResetOrder()
+  local store = SectionStore()
+  if not store then return end
+  store.order = { unpack(SECTIONS) }
+  Rearrange()
+end
+CFL.ResetSectionOrder = ResetOrder
+
+-- Raw screen units (the cursor's): a frame's top and bottom
+local function Edges(frame)
+  local top, bottom = frame:GetTop(), frame:GetBottom()
+  if not (top and bottom) then return nil end
+  local scale = frame:GetEffectiveScale()
+  return top * scale, bottom * scale
+end
+
+-- Where the section dragged would go: after how many of the sections shown (0: first). A header in sight counts as
+-- above when its middle is above the cursor; one out of sight, by where the list is scrolled to (the sections up to
+-- the one at the top of the list in sight are above it)
+local function Slot(y)
+  local box = socialView.ScrollBox
+  local shown, seen = ShownKeys(), {}
+  local topKey, topY
+  box:ForEachFrame(function(frame, node)
+    local top, bottom = Edges(frame)
+    if not top or not frame:IsVisible() then return nil end
+    local key = SectionKey(node)
+    if key then seen[key] = { top, bottom, frame } end
+    local parent = node and node.GetParent and node:GetParent()
+    local of = key or SectionKey(parent)
+    if of and (not topY or top > topY) then topKey, topY = of, top end
+    return nil
+  end)
+  local topIndex = topKey and IndexOf(shown, topKey) or 0
+  local slot = 0
+  for i, key in ipairs(shown) do
+    local at = seen[key]
+    local above
+    if at then above = (at[1] + at[2]) / 2 > y else above = i <= topIndex end
+    if above then slot = i end
+  end
+  return slot, shown, seen
+end
+CFL.SectionSlot = Slot
+
+-- The line where it would go: at the top of the next section's header in sight; else at the list's top or bottom
+local function PlaceMarker(slot, shown, seen)
+  local box = socialView.ScrollBox
+  local top, bottom = Edges(box)
+  local left, right = box:GetLeft(), box:GetRight()
+  if not (top and left and right) then marker:Hide() return end
+  local ui = UIParent:GetEffectiveScale()
+  local boxScale = box:GetEffectiveScale()
+  local y
+  local next = shown[slot + 1] and seen[shown[slot + 1]]
+  if next then
+    y = next[1] + 2 * boxScale
+  elseif slot >= #shown then
+    local last
+    box:ForEachFrame(function(frame)
+      local _, b = Edges(frame)
+      if b and frame:IsVisible() and (not last or b < last) then last = b end
+      return nil
+    end)
+    y = last and math.max(last - 2 * boxScale, bottom) or bottom
+  else
+    local previous = shown[slot] and seen[shown[slot]]
+    y = (previous or slot == 0) and top or bottom
+  end
+  y = math.min(top, math.max(bottom, y))
+  marker:ClearAllPoints()
+  marker:SetPoint("LEFT", UIParent, "BOTTOMLEFT", (left * boxScale) / ui + 8, y / ui)
+  marker:SetWidth((right - left) * boxScale / ui - 16)
+  marker:Show()
+end
+
+-- The list scrolled with the cursor near its top or bottom, or pushed past them
+local function AutoScroll(y, elapsed)
+  local box = socialView.ScrollBox
+  local top, bottom = Edges(box)
+  if not top or not (box.GetDerivedScrollRange and box.ScrollToOffset) then return end
+  local zone = SCROLL_ZONE * box:GetEffectiveScale()
+  local push
+  if y > top - zone then push = -(y - (top - zone)) elseif y < bottom + zone then push = (bottom + zone) - y end
+  if not push then return end
+  local range = box:GetDerivedScrollRange()
+  if not range or range <= 0 then return end
+  local depth = math.min(1, math.abs(push) / (zone * 4))
+  local speed = SCROLL_SLOW + (SCROLL_FAST - SCROLL_SLOW) * depth
+  local offset = box:GetDerivedScrollOffset() + (push < 0 and -1 or 1) * speed * elapsed
+  box:ScrollToOffset(math.max(0, math.min(range, offset)), true)
+end
+
+local function StopDrag()
+  drag = nil
+  if ghost then ghost:Hide() end
+  if marker then marker:Hide() end
+end
+
+-- Dropped: the section taken out of the order shown and put back where it was let go
+local function Drop()
+  local d = drag
+  StopDrag()
+  if not (d and d.slot and d.shown) then return end
+  local from = IndexOf(d.shown, d.key)
+  if not from then return end
+  local order = { unpack(d.shown) }
+  table.remove(order, from)
+  table.insert(order, d.slot >= from and d.slot or d.slot + 1, d.key)
+  KeepShownOrder(order)
+  Rearrange()
+  Click()
+end
+CFL.DropSection = function(key, slot) drag = { key = key, shown = ShownKeys(), slot = slot }; Drop() end
+
+local function DragStep(_, elapsed)
+  if not drag then return end
+  if not IsMouseButtonDown("LeftButton") then return Drop() end
+  if not (socialView and socialView:IsVisible()) then return StopDrag() end
+  local x, y = GetCursorPosition()
+  local ui = UIParent:GetEffectiveScale()
+  ghost:ClearAllPoints()
+  ghost:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x / ui, y / ui)
+  AutoScroll(y, elapsed or 0)
+  local slot, shown, seen = Slot(y)
+  drag.slot, drag.shown = slot, shown
+  PlaceMarker(slot, shown, seen)
+end
+
+local function StartDrag(key, header)
+  if drag or not key then return end
+  if not ghost then
+    ghost = CreateFrame("Frame", nil, UIParent)
+    ghost:SetFrameStrata("TOOLTIP")
+    local fill = ghost:CreateTexture(nil, "BACKGROUND")
+    fill:SetAllPoints()
+    fill:SetColorTexture(0.08, 0.06, 0.02, 0.85)
+    -- (a gold edge: top, bottom, left, right)
+    for _, side in ipairs({ { "TOPLEFT", "TOPRIGHT", false }, { "BOTTOMLEFT", "BOTTOMRIGHT", false },
+      { "TOPLEFT", "BOTTOMLEFT", true }, { "TOPRIGHT", "BOTTOMRIGHT", true } }) do
+      local edge = ghost:CreateTexture(nil, "BORDER")
+      edge:SetColorTexture(1, 0.82, 0, 0.9)
+      edge:SetPoint(side[1])
+      edge:SetPoint(side[2])
+      if side[3] then edge:SetWidth(1) else edge:SetHeight(1) end
+    end
+    ghost.text = ghost:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    ghost.text:SetPoint("LEFT", 8, 0)
+    ghost.text:SetPoint("RIGHT", -8, 0)
+    ghost.text:SetJustifyH("LEFT")
+    marker = CreateFrame("Frame", nil, UIParent)
+    marker:SetFrameStrata("TOOLTIP")
+    marker:SetHeight(3)
+    local line = marker:CreateTexture(nil, "ARTWORK")
+    line:SetAllPoints()
+    line:SetColorTexture(1, 0.82, 0, 1)
+    marker:Hide()
+  end
+  local ui = UIParent:GetEffectiveScale()
+  local scale = header:GetEffectiveScale() / ui
+  ghost:SetSize((header:GetWidth() or 300) * scale, (header:GetHeight() or 24) * scale)
+  ghost.text:SetText(header.ButtonText and header.ButtonText:GetText() or key)
+  drag = { key = key }
+  GameTooltip:Hide()
+  ghost:Show()
+  Click()
+  DragStep(nil, 0)
+end
+
+-- The grip over a header (shown while unlocked): the whole header, a move sign before its fold button
+local function Grip(frame)
+  local grip = grips[frame]
+  if grip then return grip end
+  grip = CreateFrame("Button", nil, frame)
+  grip:SetAllPoints(frame)
+  local glow = grip:CreateTexture(nil, "HIGHLIGHT")
+  glow:SetAllPoints()
+  glow:SetColorTexture(1, 0.82, 0, 0.12)
+  local sign = grip:CreateTexture(nil, "OVERLAY")
+  sign:SetSize(16, 16)
+  sign:SetTexture("Interface\\Cursor\\UI-Cursor-Move")
+  if frame.CollapseButton then sign:SetPoint("RIGHT", frame.CollapseButton, "LEFT", -4, 0) else sign:SetPoint("RIGHT", -30, 0) end
+  grip:SetScript("OnMouseDown", function(self, button) if button == "LeftButton" then StartDrag(self.key, frame) end end)
+  grip:SetScript("OnEnter", function(self)
+    if drag then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText(L.DRAG_TIP, 1, 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  grip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  grips[frame] = grip
+  return grip
+end
+function CFL.SectionGrip(frame) return grips[frame] end
+
+-- The grips on the headers in sight, while unlocked
+local function SyncGrips()
+  local box = socialView and socialView.ScrollBox
+  local on = {}
+  if unlocked and box and box:IsVisible() and box.ForEachFrame then
+    box:ForEachFrame(function(frame, node)
+      local key = SectionKey(node)
+      if key then
+        local grip = Grip(frame)
+        grip.key = key
+        grip:SetFrameLevel(frame:GetFrameLevel() + 10)
+        grip:Show()
+        on[frame] = true
+      end
+      return nil
+    end)
+  end
+  for frame, grip in pairs(grips) do
+    if not on[frame] then grip:Hide() end
+  end
+end
+CFL.SyncSectionGrips = SyncGrips
+
+local function LockLook()
+  if not lockButton then return end
+  local state = unlocked and "Unlocked-" or "Locked-"
+  lockButton:SetNormalTexture(LOCK .. state .. "Up")
+  lockButton:SetPushedTexture(LOCK .. state .. "Down")
+end
+
+local function SetUnlocked(on)
+  unlocked = on and true or false
+  if not unlocked then StopDrag() end
+  LockLook()
+  SyncGrips()
+  if driver then driver:SetShown(unlocked) end
+end
+CFL.SetSectionsUnlocked = SetUnlocked
+function CFL.SectionsUnlocked() return unlocked end
+
+local function LockTip(self)
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:SetText(L.LOCK_TITLE, 1, 1, 1)
+  GameTooltip:AddLine(unlocked and L.UNLOCKED_TIP or L.LOCKED_TIP, nil, nil, nil, true)
+  GameTooltip:Show()
+end
+
+local function OptionsMenu(owner)
+  if not (MenuUtil and MenuUtil.CreateContextMenu) then return end
+  MenuUtil.CreateContextMenu(owner, function(_, root)
+    root:CreateTitle(L.LOCK_TITLE)
+    root:CreateCheckbox(L.OPT_ONLINE_TOP, function() return Above("online") end,
+      function() SetAbove("online", not Above("online")) end)
+    root:CreateCheckbox(L.OPT_OFFLINE_TOP, function() return Above("offline") end,
+      function() SetAbove("offline", not Above("offline")) end)
+    root:CreateButton(unlocked and L.LOCK_SECTIONS or L.UNLOCK_SECTIONS, function() SetUnlocked(not unlocked) end)
+    root:CreateButton(L.OPT_RESET, ResetOrder)
+  end)
+end
+
+-- The padlock, on the friends page (shown with it), beside the window's X
+local function MakeLock()
+  local close = SocialUIFrame and SocialUIFrame.CloseButton
+  if lockButton or not (socialView and close) then return end
+  local lock = CreateFrame("Button", nil, socialView)
+  local w, h = close:GetSize()
+  lock:SetSize(w and w > 0 and w or 24, h and h > 0 and h or 24)
+  lock:SetPoint("RIGHT", close, "LEFT", 0, 0)
+  lock:SetFrameStrata(close:GetFrameStrata())
+  lock:SetFrameLevel(close:GetFrameLevel() + 1)
+  lock:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+  lock:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  lock:SetScript("OnClick", function(self, button)
+    if button == "RightButton" then OptionsMenu(self) return end
+    Click()
+    SetUnlocked(not unlocked)
+    LockTip(self)
+  end)
+  lock:SetScript("OnEnter", LockTip)
+  lock:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  lockButton = lock
+  CFL.lockButton = lock
+  LockLook()
+  -- (the grips follow the headers as the list scrolls; the dragged section follows the cursor)
+  driver = CreateFrame("Frame", nil, socialView)
+  driver:Hide()
+  local since = 0
+  driver:SetScript("OnUpdate", function(_, elapsed)
+    if drag then DragStep(nil, elapsed) end
+    since = since + elapsed
+    if since >= 0.05 then since = 0; SyncGrips() end
+  end)
+  socialView:HookScript("OnHide", function() SetUnlocked(false) end)
+end
+
 function CFL.HookSocial()
   if socialView then return true end
   local view = SocialUIFrame and SocialUIFrame.FriendsList
   if not (view and view.InsertFriendsIntoDataProvider and FriendsListSocialCardMixin) then return false end
   socialView = view
-  -- (in the list the game builds, before it lays it out)
-  hooksecurefunc(view, "InsertFriendsIntoDataProvider", function(_, provider) SocialInsert(provider) end)
+  -- (in the list the game builds, before it lays it out: our sections in it, all in the player's order)
+  hooksecurefunc(view, "InsertFriendsIntoDataProvider", function(_, provider) Arrange(provider) end)
+  -- (our sections' fold, as the game keeps it for its own: kept here too, for the next times)
+  if type(view.SaveHeaderCollapsedState) == "function" then
+    hooksecurefunc(view, "SaveHeaderCollapsedState", function(_, headerType, collapsed)
+      local store = SectionStore()
+      if not store then return end
+      for key, kind in pairs(OURS) do
+        if kind == headerType then store.folded[key] = collapsed and true or nil end
+      end
+    end)
+  end
   -- The game's card-size cache: the game fills it as it lays the list out, a pass that has read our lines (an
   -- addon's) first, so each size is put in it in the addon's name; at its next refresh the game empties it just
   -- before its friend search, and a size of ours found there then has the search refused: the list empty (black,
@@ -907,6 +1363,7 @@ function CFL.HookSocial()
   -- (each card as the game draws it: after its own drawing, ours dressed; the cards are made after this, from the
   -- game's card with this hook in it)
   hooksecurefunc(FriendsListSocialCardMixin, "Initialize", function(frame, node) SocialCard(nil, frame, node) end)
+  MakeLock()
   return true
 end
 
