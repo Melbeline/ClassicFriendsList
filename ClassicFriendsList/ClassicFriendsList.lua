@@ -43,16 +43,80 @@ local function Normal(name)
   return name
 end
 
+-- A name the earlier capitals broke (its accented first letter cut in two, kept so: "Éclair" became "▯clair"): the
+-- replacement sign in it, or bytes that are no UTF-8
+local function Broken(name)
+  if type(name) ~= "string" or issecret(name) then return false end
+  if name:find("\239\191\189", 1, true) then return true end
+  local i, n = 1, #name
+  while i <= n do
+    local b = name:byte(i)
+    local len = b < 128 and 1 or (b >= 194 and b <= 223) and 2 or (b >= 224 and b <= 239) and 3 or (b >= 240 and b <= 244) and 4
+    if not len then return true end
+    for k = i + 1, i + len - 1 do
+      local c = name:byte(k)
+      if not c or c < 128 or c > 191 then return true end
+    end
+    i = i + len
+  end
+  return false
+end
+CFL.Broken = Broken
+-- Its plain letters alone, lower-case (the accented ones, and what is left of a broken one, dropped): a broken name
+-- and its whole spelling alike ("▯clair Chazal", "Éclair Chazal": "clair chazal")
+local function Plain(name) return ((name:gsub("[\128-\255]", "")):lower()) end
+
 local function List()
   if not db then return nil end
   if type(db.friends) ~= "table" then db.friends = {} end
-  for key, alt in pairs(db.friends) do
-    if type(key) ~= "string" or type(alt) ~= "table" or not Normal(alt.name) then db.friends[key] = nil
-    else alt.name = Normal(alt.name) end
+  local list, moved = db.friends, nil
+  for key, alt in pairs(list) do
+    if type(key) ~= "string" or type(alt) ~= "table" or type(alt.name) ~= "string" then list[key] = nil
+    else
+      -- (a broken name: its whole spelling back from its key, when that one is whole)
+      if Broken(alt.name) and not Broken(key) and key:find("[\128-\255]") and Plain(key) == Plain(alt.name) then
+        alt.name = key
+      end
+      if not Normal(alt.name) then list[key] = nil
+      else
+        alt.name = Normal(alt.name)
+        if Broken(key) and not Broken(alt.name) then moved = moved or {}; moved[key] = alt end
+      end
+    end
   end
-  return db.friends
+  -- (one kept under a broken key, its name whole: kept under its whole one)
+  for key, alt in pairs(moved or {}) do
+    list[key] = nil
+    local whole = alt.name:lower()
+    if not list[whole] then list[whole] = alt end
+  end
+  return list
 end
 CFL.List = List
+
+-- A whole name seen or heard as the game writes it (a sender, a unit, a Battle.net friend's character, a character
+-- known), or one of the names kept lower-case: one of the list whose name is broken takes it back, under its whole
+-- name. Its first name and surname must match whole (their plain letters).
+function CFL.Mend(heard)
+  if issecret(heard) or type(heard) ~= "string" then return false end
+  local proper = ((heard:match("^([^%-]+)") or heard):gsub("^%s+", ""):gsub("%s+$", ""))
+  if proper == "" or not proper:find("[\128-\255]") or Broken(proper) then return false end
+  local list = List()
+  if not list then return false end
+  local plain = Plain(proper)
+  for key, alt in pairs(list) do
+    if Broken(alt.name) and Plain(alt.name) == plain then
+      local name = Normal(proper)
+      if not name then return false end
+      list[key] = nil
+      if not list[name:lower()] then list[name:lower()] = alt end
+      alt.name = name
+      if CFL.Refresh then CFL.Refresh() end
+      return true
+    end
+  end
+  return false
+end
 
 -- A line in the chat as the game's own system lines (yellow), in the game's words when it has them
 local function SaySystem(text)
@@ -181,6 +245,29 @@ local function KeepMe(level)
   mine[Key(me)] = { level = tonumber(level) or (UnitLevel and UnitLevel("player")), class = class, at = time and time() }
 end
 CFL.KeepMe = KeepMe
+
+-- The list's broken names mended from every whole name the addon knows: the characters seen (their sex kept), the
+-- player's own, the Battle.net friends' characters in the game (nothing done while none is broken)
+local function MendKnown()
+  local any = false
+  for _, alt in pairs(List() or {}) do if Broken(alt.name) then any = true break end end
+  if not any then return end
+  local names = {}
+  for key in pairs(Sexes() or {}) do names[#names + 1] = key end
+  for key in pairs(Mine() or {}) do names[#names + 1] = key end
+  if C_BattleNet and C_BattleNet.GetFriendAccountInfo and BNGetNumFriends then
+    local okCount, count = pcall(BNGetNumFriends)
+    for i = 1, (okCount and type(count) == "number" and not issecret(count)) and count or 0 do
+      local ok, info = pcall(C_BattleNet.GetFriendAccountInfo, i)
+      local game = ok and type(info) == "table" and info.gameAccountInfo
+      if type(game) == "table" then names[#names + 1] = game.characterName end
+    end
+  end
+  for _, name in ipairs(names) do
+    if type(name) == "string" then CFL.Mend(name) end
+  end
+end
+CFL.MendKnown = MendKnown
 
 local function SexOf(name)
   local sexes = Sexes()
@@ -1386,6 +1473,7 @@ local function Announce(alt, online)
   frame:AddMessage(text, r, g, b)
 end
 local function Look(announce)
+  MendKnown()
   local changed = false
   for key, alt in pairs(List() or {}) do
     if not IsMe(alt.name) and CFL.Known(alt.name) then
@@ -1638,6 +1726,7 @@ local function NoteUnit(unit)
   if not ok or issecret(player) or not player then return end
   local name = WholeName(unit)
   if not name then return end
+  CFL.Mend(name)
   local alt, own = Listed(Key(name))
   if not alt then return end
   local okSex, sex = pcall(UnitSex, unit)
@@ -1672,6 +1761,7 @@ probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, ...)
     local prefix, text, channel, sender = a1, a2, a3, a4
     if prefix ~= PROBE_PREFIX or channel ~= "WHISPER" then return end
     if issecret(text) or issecret(sender) or type(text) ~= "string" or type(sender) ~= "string" then return end
+    CFL.Mend(sender)
     local alt, own = Listed(Key(sender))
     if not alt then
       -- A player not in this list asking: answered all the same (its level, class and zone are what /who tells
@@ -1715,6 +1805,7 @@ probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, ...)
     for i = 1, (GetNumGroupMembers and GetNumGroupMembers() or 0) do NoteUnit((raid and "raid" or "party") .. i) end
   else -- heard in the chat
     if issecret(a2) or type(a2) ~= "string" or a2 == "" then return end
+    CFL.Mend(a2)
     local alt, own = Listed(Key(a2))
     if alt then
       Respell(alt, a2)
