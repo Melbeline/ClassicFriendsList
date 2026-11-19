@@ -5,7 +5,7 @@
 -- the offline Battle.net friends), in the game's look: online or offline (see "Online or not" below),
 -- with their level, class and zone (from their own ClassicFriendsList or Clara) and when last seen. The game's Add
 -- Friend window in the 1.15 look, with two lines: the game's (a BattleTag, or a name the Forever way) and the
--- addon's, that adds a character to this list. Over a row: its tooltip; right-click: whisper, invite or remove.
+-- addon's, that adds a character to this list. Over a row: its tooltip; right-click: invite, whisper or remove.
 -- It speaks Clara's language (the same addon messages): a player with Clara and one with ClassicFriendsList see each
 -- other online at once. Clara loaded: this addon stays off (Clara keeps the same list).
 
@@ -718,13 +718,14 @@ local function Menu(catcher)
   MenuUtil.CreateContextMenu(catcher, function(_, root)
     root:CreateTitle(alt.name)
     if not IsMe(alt.name) then
-      root:CreateButton(WHISPER or "Whisper", function()
-        local tell = (ChatFrameUtil and ChatFrameUtil.SendTell) or ChatFrame_SendTell
-        if tell then tell(alt.name) end
-      end)
+      -- (Invite first, then Whisper)
       root:CreateButton(PARTY_INVITE or INVITE or "Invite", function()
         local invite = (C_PartyInfo and C_PartyInfo.InviteUnit) or InviteUnit
         if invite then invite(alt.name) end
+      end)
+      root:CreateButton(WHISPER or "Whisper", function()
+        local tell = (ChatFrameUtil and ChatFrameUtil.SendTell) or ChatFrame_SendTell
+        if tell then tell(alt.name) end
       end)
     end
     root:CreateButton(L.REMOVE, function() CFL.Remove(alt.name) end)
