@@ -2055,6 +2055,67 @@ SlashCmdList.CLASSICFRIENDSLIST = function(msg)
 end
 
 ---------------------------------------------------------------------------
+-- A character's right-click menu (the target's portrait, a group's frame, a name in the chat...): Add Classic friend
+-- in the game's Add Friend submenu, its whole name (first name and surname) put in the list
+---------------------------------------------------------------------------
+-- (the game's menus that can hold its Add Friend: those of another player)
+local PLAYER_MENUS = { "TARGET", "FOCUS", "PARTY", "PLAYER", "RAID_PLAYER", "RAID", "ENEMY_PLAYER", "ARENAENEMY",
+  "FRIEND", "FRIEND_OFFLINE", "CHAT_ROSTER", "GUILD", "GUILD_OFFLINE", "COMMUNITIES_MEMBER", "COMMUNITIES_WOW_MEMBER",
+  "COMMUNITIES_GUILD_MEMBER", "NEIGHBORHOOD_ROSTER", "RAF_RECRUIT", "RECENT_ALLY", "RECENT_ALLY_OFFLINE",
+  "PVP_SCOREBOARD", "WORLD_STATE_SCORE" }
+
+-- Its whole name: the unit's (UnitNameUnmodified: first name and surname), else the menu's name and surname
+function CFL.MenuName(contextData)
+  if type(contextData) ~= "table" then return nil end
+  local name
+  local unit = contextData.unit
+  if type(unit) == "string" and not issecret(unit) then name = WholeName(unit) end
+  if name == nil then
+    local first, surname = contextData.name, contextData.surname
+    if type(first) ~= "string" or issecret(first) then return nil end
+    name = first:match("^([^%-]+)") or first -- (a realm left out: "Name-Realm")
+    if type(surname) == "string" and not issecret(surname) and surname ~= "" and not name:find(" ", 1, true) then
+      name = name .. " " .. surname
+    end
+  end
+  return Normal(name)
+end
+
+-- The game's Add Friend submenu in a menu (in it, or in one of its submenus)
+local function FriendSubmenu(description, depth)
+  if not (description and description.EnumerateElementDescriptions) then return nil end
+  for _, child in description:EnumerateElementDescriptions() do
+    if MenuUtil.GetElementText(child) == ADD_FRIEND then return child end
+    if depth > 0 then
+      local found = FriendSubmenu(child, depth - 1)
+      if found then return found end
+    end
+  end
+end
+
+local function AddClassicEntry(_, root, contextData)
+  if off then return end
+  local name = CFL.MenuName(contextData)
+  if not name or IsMe(name) then return end
+  local submenu = FriendSubmenu(root, 2)
+  if not submenu then return end
+  local button = submenu:CreateButton(L.MENU_ADD, function() CFL.Add(name) end)
+  local list = List()
+  if list and list[name:lower()] and button and button.SetEnabled then button:SetEnabled(false) end -- (already in it)
+end
+function CFL.AddClassicEntry(owner, root, contextData) pcall(AddClassicEntry, owner, root, contextData) end
+
+-- (at login, Clara not loaded: Clara has its own)
+local menusHooked = false
+function CFL.HookUnitMenus()
+  local menus = _G.Menu
+  if menusHooked or type(menus) ~= "table" or not menus.ModifyMenu or not (MenuUtil and MenuUtil.GetElementText)
+    or not ADD_FRIEND then return end
+  menusHooked = true
+  for _, which in ipairs(PLAYER_MENUS) do menus.ModifyMenu("MENU_UNIT_" .. which, CFL.AddClassicEntry) end
+end
+
+---------------------------------------------------------------------------
 -- Start: the saved list at load; at login, off if Clara runs (it keeps the same list), else everything
 ---------------------------------------------------------------------------
 local function ClaraLoaded()
@@ -2090,6 +2151,7 @@ events:SetScript("OnEvent", function(self, event, name)
   end
   List()
   Hook()
+  CFL.HookUnitMenus()
   local dressed, social = CFL.DressAddFriend(), CFL.HookSocial()
   if not (dressed and social) then
     -- (the game's Add Friend window and its social window load with their friends windows: dressed as they come)

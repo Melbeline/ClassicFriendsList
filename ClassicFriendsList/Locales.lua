@@ -25,6 +25,7 @@ local L = {
   ROW_HINT    = "Right-click: invite (suggest an invite in a group led by another), whisper, rename, or remove from the list",
   REMOVE      = "Remove from the list",
   RENAME      = "Rename",
+  MENU_ADD    = "Add Classic friend",
   RENAME_ASK  = "The character's whole name, as the game writes it (first name and surname, accents included):",
   ADDED       = "%s added to friends.",
   REMOVED     = "%s removed from friends.",
@@ -61,6 +62,7 @@ if locale == "frFR" then
   L.ROW_HINT = "Clic droit : inviter (suggérer une invitation dans un groupe mené par un autre), chuchoter, renommer, ou retirer de la liste"
   L.REMOVE = "Retirer de la liste"
   L.RENAME = "Renommer"
+  L.MENU_ADD = "Ajouter un ami classique"
   L.RENAME_ASK = "Le nom entier du personnage, comme le jeu l'écrit (prénom et nom, accents compris) :"
   L.ADDED = "%s ajouté(e) à vos amis."
   L.REMOVED = "%s retiré(e) de vos amis."
@@ -94,6 +96,7 @@ elseif locale == "deDE" then
   L.ROW_HINT = "Rechtsklick: einladen (Einladung vorschlagen in einer Gruppe, die jemand anderes führt), anflüstern, umbenennen oder aus der Liste entfernen"
   L.REMOVE = "Aus der Liste entfernen"
   L.RENAME = "Umbenennen"
+  L.MENU_ADD = "Klassischen Freund hinzufügen"
   L.RENAME_ASK = "Der ganze Name der Figur, wie das Spiel ihn schreibt (Vor- und Nachname, mit Akzenten):"
   L.ADDED = "%s zur Freundesliste hinzugefügt."
   L.REMOVED = "%s von der Freundesliste entfernt."
