@@ -718,8 +718,15 @@ local function Menu(catcher)
   MenuUtil.CreateContextMenu(catcher, function(_, root)
     root:CreateTitle(alt.name)
     if not IsMe(alt.name) then
-      -- (Invite first, then Whisper)
-      root:CreateButton(PARTY_INVITE or INVITE or "Invite", function()
+      -- (Invite first, then Whisper. In a group led by another, without being its assistant: Suggest Invite, as the
+      -- game's own menus say it: the same invite, which the server hands to the leader; the group full: said so.)
+      local suggest = IsInGroup and IsInGroup() and not (UnitIsGroupLeader("player") or UnitIsGroupAssistant("player"))
+      root:CreateButton(suggest and (SUGGEST_INVITE or "Suggest Invite") or (PARTY_INVITE or INVITE or "Invite"), function()
+        if suggest and C_PartyInfo and C_PartyInfo.IsPartyFull and C_PartyInfo.IsPartyFull() then
+          local say = ChatFrameUtil and ChatFrameUtil.DisplaySystemMessageInPrimary
+          if say then say(ERR_GROUP_FULL or "Your party is full.") end
+          return
+        end
         local invite = (C_PartyInfo and C_PartyInfo.InviteUnit) or InviteUnit
         if invite then invite(alt.name) end
       end)

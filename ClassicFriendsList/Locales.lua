@@ -22,7 +22,7 @@ local L = {
   OPT_RESET   = "Default order",
   MOVE_UP     = "Move up",
   MOVE_DOWN   = "Move down",
-  ROW_HINT    = "Right-click: invite, whisper, or remove from the list",
+  ROW_HINT    = "Right-click: invite (suggest an invite in a group led by another), whisper, or remove from the list",
   REMOVE      = "Remove from the list",
   ADDED       = "%s added to friends.",
   REMOVED     = "%s removed from friends.",
@@ -56,7 +56,7 @@ if locale == "frFR" then
   L.OPT_RESET = "Ordre par défaut"
   L.MOVE_UP = "Monter"
   L.MOVE_DOWN = "Descendre"
-  L.ROW_HINT = "Clic droit : inviter, chuchoter, ou retirer de la liste"
+  L.ROW_HINT = "Clic droit : inviter (suggérer une invitation dans un groupe mené par un autre), chuchoter, ou retirer de la liste"
   L.REMOVE = "Retirer de la liste"
   L.ADDED = "%s ajouté(e) à vos amis."
   L.REMOVED = "%s retiré(e) de vos amis."
@@ -87,7 +87,7 @@ elseif locale == "deDE" then
   L.OPT_RESET = "Standardreihenfolge"
   L.MOVE_UP = "Nach oben"
   L.MOVE_DOWN = "Nach unten"
-  L.ROW_HINT = "Rechtsklick: einladen, anflüstern oder aus der Liste entfernen"
+  L.ROW_HINT = "Rechtsklick: einladen (Einladung vorschlagen in einer Gruppe, die jemand anderes führt), anflüstern oder aus der Liste entfernen"
   L.REMOVE = "Aus der Liste entfernen"
   L.ADDED = "%s zur Freundesliste hinzugefügt."
   L.REMOVED = "%s von der Freundesliste entfernt."
