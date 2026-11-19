@@ -65,6 +65,12 @@ CFL.Broken = Broken
 -- Its plain letters alone, lower-case (the accented ones, and what is left of a broken one, dropped): a broken name
 -- and its whole spelling alike ("▯clair Chazal", "Éclair Chazal": "clair chazal")
 local function Plain(name) return ((name:gsub("[\128-\255]", "")):lower()) end
+-- A name kept without its accented letters (an earlier version dropped them: "Miss Émilia" kept as "Miss Milia"):
+-- none of its own letters accented, the whole name's plain letters the same, first name and surname
+local function LostAccents(kept, whole)
+  return type(kept) == "string" and not kept:find("[\128-\255]") and whole:find("[\128-\255]") ~= nil
+    and Plain(kept) == Plain(whole)
+end
 
 local function List()
   if not db then return nil end
@@ -105,7 +111,7 @@ function CFL.Mend(heard)
   if not list then return false end
   local plain = Plain(proper)
   for key, alt in pairs(list) do
-    if Broken(alt.name) and Plain(alt.name) == plain then
+    if (Broken(alt.name) or LostAccents(alt.name, proper)) and Plain(alt.name) == plain then
       local name = Normal(proper)
       if not name then return false end
       list[key] = nil
@@ -156,6 +162,54 @@ function CFL.Remove(name)
   CFL.Refresh()
   return true
 end
+
+-- Its name typed again, whole (a name an earlier version broke or kept without its accents, never heard whole since:
+-- "Miss Milia" renamed "Miss Émilia"); its place in the list and its section kept
+function CFL.Rename(old, typed)
+  local list = List()
+  local name = Normal(typed)
+  if not (list and name and type(old) == "string") then return false end
+  local key, alt
+  for k, a in pairs(list) do if a.name == old then key, alt = k, a break end end
+  if not alt then return false end
+  local new = name:lower()
+  if new ~= key and list[new] then
+    SaySystem((ERR_FRIEND_ALREADY_S or L.ALREADY):format(list[new].name))
+    return false
+  end
+  list[key] = nil
+  list[new] = alt
+  alt.name = name
+  CFL.Refresh()
+  return true
+end
+
+-- The name typed in the game's own box (Enter or its button; Escape and Cancel close it)
+local RENAME = "CLASSICFRIENDSLIST_RENAME"
+local function AskName(alt)
+  if not (StaticPopupDialogs and StaticPopup_Show) then return end
+  local function Box(dialog) return dialog and (dialog.editBox or dialog.EditBox or (dialog.GetEditBox and dialog:GetEditBox())) end
+  StaticPopupDialogs[RENAME] = StaticPopupDialogs[RENAME] or {
+    text = "%s", button1 = L.RENAME, button2 = CANCEL or "Cancel", hasEditBox = true, maxLetters = 32,
+    timeout = 0, whileDead = true, hideOnEscape = true,
+    OnShow = function(self, data)
+      local box = Box(self)
+      if box then box:SetText(data and data.name or ""); box:HighlightText(); box:SetFocus() end
+    end,
+    OnAccept = function(self, data)
+      local box = Box(self)
+      if data and box then CFL.Rename(data.name, box:GetText() or "") end
+    end,
+    EditBoxOnEnterPressed = function(box, data)
+      if data then CFL.Rename(data.name, box:GetText() or "") end
+      local dialog = box:GetParent()
+      if dialog then dialog:Hide() end
+    end,
+    EditBoxOnEscapePressed = function(box) local dialog = box:GetParent(); if dialog then dialog:Hide() end end,
+  }
+  StaticPopup_Show(RENAME, L.RENAME_ASK, nil, { name = alt.name })
+end
+CFL.AskName = AskName -- (for the tests)
 
 -- In the list's order: online first, then by name.
 local function Sorted()
@@ -262,7 +316,9 @@ CFL.Elsewhere = OnThisAccount
 -- player's own, the Battle.net friends' characters in the game (nothing done while none is broken)
 local function MendKnown()
   local any = false
-  for _, alt in pairs(List() or {}) do if Broken(alt.name) then any = true break end end
+  for _, alt in pairs(List() or {}) do
+    if Broken(alt.name) or not alt.name:find("[\128-\255]") then any = true break end -- (broken, or perhaps its accents lost)
+  end
   if not any then return end
   local names = {}
   for key in pairs(Sexes() or {}) do names[#names + 1] = key end
@@ -735,6 +791,7 @@ local function Menu(catcher)
         if tell then tell(alt.name) end
       end)
     end
+    root:CreateButton(L.RENAME, function() AskName(alt) end)
     root:CreateButton(L.REMOVE, function() CFL.Remove(alt.name) end)
   end)
 end
