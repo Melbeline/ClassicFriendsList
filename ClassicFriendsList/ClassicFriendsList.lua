@@ -1586,9 +1586,14 @@ end
 ---------------------------------------------------------------------------
 local wasOnline = {} -- lower-case whole name -> online when last looked
 local settled = false -- (the first moments after login: the ones already online heard, not announced)
+-- "No player named" lines held back a moment (see "Held back", below): Key(name) -> the line(s), the windows, when
+CFL.Withheld = { lines = {} } -- (no local of its own: the file's main chunk is at Lua's 200 locals)
 local function Announce(alt, online)
   local frame = DEFAULT_CHAT_FRAME
   if not (frame and frame.AddMessage) then return end
+  -- (one the server has just said not found, now online: neither line said, the two only the server's late word)
+  local key = Key(alt.name)
+  if online and CFL.Withheld.lines[key] then CFL.Withheld.lines[key] = nil return end
   local info = ChatTypeInfo and ChatTypeInfo.SYSTEM
   local r, g, b = info and info.r or 1, info and info.g or 1, info and info.b or 0
   local text
@@ -1670,7 +1675,15 @@ local function SetVerdict(key, online, heard)
   local p = probes[key] or {}
   probes[key] = p
   p.sent = nil
-  if heard then p.asked = nil end -- (heard from: its questions answered, none left for a late "no player named")
+  -- (heard from: its questions answered; the ones asked just before it was heard, whose "no player named" may still
+  -- come, kept a moment: that line hidden, saying nothing of it now)
+  if heard and p.asked then
+    local now, keep, wait = GetTime(), {}, CFL.Wait and CFL.Wait() or PROBE_WAIT -- (Wait: below)
+    for _, q in ipairs(p.asked) do
+      if now - q.at < wait then q.stale, q.untilAt = true, now + wait; keep[#keep + 1] = q end
+    end
+    p.asked = keep
+  end
   local changed = p.verdict ~= online
   p.verdict, p.at = online, GetTime()
   local alt = Listed(key)
@@ -1703,7 +1716,7 @@ local function AskOne(alt, now)
     p.tried, p.sent = now, now
     -- (each question kept a while: its answer, however late, is ours)
     p.asked = p.asked or {}
-    p.asked[#p.asked + 1] = { at = now, load = loads }
+    p.asked[#p.asked + 1] = { at = now, load = loads, ask = true }
   elseif offline then -- (the game said so at once)
     p.tried = now
     SetVerdict(key, false)
@@ -1754,8 +1767,7 @@ local function AskServer()
   local wait = Wait()
   for key, p in pairs(probes) do
     -- (questions too old for an answer: let go)
-    local asked = p.asked
-    while asked and asked[1] and now - asked[1].at > PROBE_HIDE do table.remove(asked, 1) end
+    if p.asked then CFL.Withheld.Expire(p.asked, now) end
     if p.sent and now - p.sent >= wait then SetVerdict(key, true) end -- (unanswered: online)
   end
   if now - lastAsked < PROBE_EVERY or now < pausedUntil then return end
@@ -1824,26 +1836,88 @@ local function TakeAnswer(text, line)
   if issecret(text) or type(text) ~= "string" then return nil, false end
   local now = GetTime()
   local byLine = type(line) == "number" and not issecret(line) and line > 0
-  if (byLine and line == lastLine) or (not byLine and text == lastText and now == lastAt) then return lastKey, lastOurs end
+  if (byLine and line == lastLine) or (not byLine and text == lastText and now == lastAt) then return lastKey, lastOurs, CFL.Withheld.last end
   local key = NotFoundName(text)
-  local ours = false
+  local ours, held = false, nil
   local p = key and probes[key]
   local asked = p and p.asked
-  while asked and asked[1] and now - asked[1].at > PROBE_HIDE do table.remove(asked, 1) end
+  if asked then CFL.Withheld.Expire(asked, now) end
   if asked and asked[1] then
     local newest = asked[#asked]
-    if newest.load == loads then slowest = math.max(slowest, now - newest.at) end
-    table.remove(asked, 1)
-    ours = true
+    if newest.ask and newest.load == loads then slowest = math.max(slowest, now - newest.at) end
+    ours = table.remove(asked, 1)
   end
-  lastLine, lastText, lastAt, lastKey, lastOurs = byLine and line or nil, text, now, key, ours
-  return key, ours
+  if key and not ours then held = CFL.Withheld.Hold(key, text, now) end
+  lastLine, lastText, lastAt, lastKey, lastOurs, CFL.Withheld.last = byLine and line or nil, text, now, key, ours, held
+  return key, ours, held
 end
 
-local function HideOurs(_, _, text, ...)
+---------------------------------------------------------------------------
+-- Held back: a "No player named" line that answers no whisper of ours, naming a character of the list (a whisper of
+-- the player's own, or the server's word coming late or twice), hidden a moment: 3 seconds, longer while the server
+-- is slow (the time the addon waits for its answers, and a second). Heard from meanwhile (it came online: the line
+-- was only the server's late word), the line dropped, and its "has come online" not said either. Else the line shown
+-- then, in each chat window that would have shown it, and the character offline.
+---------------------------------------------------------------------------
+CFL.Withheld.HOLD_MIN = 3
+CFL.Withheld.REPLY_HIDE = 5 -- seconds an answer of ours waits for the server's "no player named" (one online says nothing)
+
+-- The questions too old for an answer let go: ours, after PROBE_HIDE; an answer of ours, or one asked just before
+-- the character was heard from, sooner
+function CFL.Withheld.Expire(asked, now)
+  for i = #asked, 1, -1 do
+    local q = asked[i]
+    if now > (q.untilAt or (q.at + PROBE_HIDE)) then table.remove(asked, i) end
+  end
+end
+
+-- An answer of ours whispered (its level, class and zone): a "no player named" for it is ours too (hidden), and says
+-- nothing of the character now (it has just been heard from)
+function CFL.Withheld.Expect(name)
+  if issecret(name) or type(name) ~= "string" then return end
+  local key, now = Key(name), GetTime()
+  local p = probes[key] or {}
+  probes[key] = p
+  p.asked = p.asked or {}
+  p.asked[#p.asked + 1] = { at = now, load = loads, untilAt = now + math.max(CFL.Withheld.REPLY_HIDE, Wait()) }
+end
+
+function CFL.Withheld.Release(key, entry)
+  if CFL.Withheld.lines[key] ~= entry then return end -- (dropped: it came online)
+  CFL.Withheld.lines[key] = nil
+  local p = probes[key]
+  if p and p.verdict == true and (p.at or 0) > entry.at then return end -- (heard from since: the line was late)
+  local info = ChatTypeInfo and ChatTypeInfo.SYSTEM
+  for frame in pairs(entry.frames) do
+    if frame.AddMessage then
+      for _, text in ipairs(entry.texts) do frame:AddMessage(text, info and info.r or 1, info and info.g or 1, info and info.b or 0) end
+    end
+  end
+  local alt, own = Listed(key)
+  if alt then SetVerdict(own, false) end
+end
+
+function CFL.Withheld.Hold(key, text, now)
+  local alt, own = Listed(key)
+  if not alt then return nil end
+  local entry = CFL.Withheld.lines[own]
+  if entry then
+    entry.texts[#entry.texts + 1] = text
+    return entry
+  end
+  entry = { texts = { text }, frames = {}, at = now }
+  CFL.Withheld.lines[own] = entry
+  local p = probes[own]
+  if p then p.sent = nil end -- (the server has spoken of it: no silence taken for online)
+  C_Timer.After(math.max(CFL.Withheld.HOLD_MIN, Wait() + 1), function() CFL.Withheld.Release(own, entry) end)
+  return entry
+end
+
+local function HideOurs(frame, _, text, ...)
   if off then return false end
-  local _, ours = TakeAnswer(text, (select(10, ...)))
-  return ours
+  local _, ours, held = TakeAnswer(text, (select(10, ...)))
+  if held and frame then held.frames[frame] = true end
+  return (ours or held) and true or false
 end
 
 local function Answer(sender)
@@ -1851,9 +1925,11 @@ local function Answer(sender)
   local _, class = UnitClass("player")
   local zone = (GetRealZoneText and GetRealZoneText()) or (GetZoneText and GetZoneText()) or ""
   if issecret(zone) or type(zone) ~= "string" then zone = "" end
-  Whisper(sender, ("I|%d|%s|%s"):format(tonumber(level) or 0, class or "", (zone:gsub("|", ""))))
+  if Whisper(sender, ("I|%d|%s|%s"):format(tonumber(level) or 0, class or "", (zone:gsub("|", "")))) then
+    CFL.Withheld.Expect(sender)
+  end
   local sex = UnitSex and UnitSex("player")
-  if sex == 2 or sex == 3 then Whisper(sender, "S|" .. sex) end
+  if (sex == 2 or sex == 3) and Whisper(sender, "S|" .. sex) then CFL.Withheld.Expect(sender) end
 end
 
 -- A unit's whole name ("First Surname"), as the game's own names give it
@@ -1926,8 +2002,10 @@ probeEvents:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, ...)
       C_Timer.After(PROBE_SETTLE, AskAll)
     end
   elseif event == "CHAT_MSG_SYSTEM" then
-    local key = TakeAnswer(a1, (select(7, ...)))
-    if not key then return end
+    -- (a question of ours answered: offline; an answer of ours, or a question asked just before it was heard from:
+    -- hidden, saying nothing of it now; any other line: held back, see above)
+    local key, ours = TakeAnswer(a1, (select(7, ...)))
+    if not (key and ours and ours.ask and not ours.stale) then return end
     local alt, own = Listed(key)
     if alt then SetVerdict(own, false) end
   elseif event == "CHAT_MSG_ADDON" then
