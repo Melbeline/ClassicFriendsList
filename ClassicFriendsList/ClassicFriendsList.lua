@@ -1054,6 +1054,79 @@ local function Arrange(provider)
   if provider.Invalidate then provider:Invalidate() end
 end
 
+---------------------------------------------------------------------------
+-- The game's Battle.net friends put back when its own search gave none: the game builds its list with a friend search
+-- (C_BattleNet.SearchFriends) it refuses when the list is built in an addon's name, any addon's (the search then gives
+-- nothing: the Battle.net friends gone, our characters alone). The player has some, no search typed, no filter
+-- ticked: they are put in as the game puts them (its two sections, their counts and folds, each friend's card). Each
+-- time it happens is kept for the report: when, and from where the list was built.
+---------------------------------------------------------------------------
+CFL.bnetBack = { count = 0, last = nil }
+function CFL.BnetBack(view, provider)
+  local back = CFL.bnetBack
+  local root = provider and provider.GetRootNode and provider:GetRootNode()
+  if type(root) ~= "table" or type(root.GetNodes) ~= "function" then return false end
+  for _, node in ipairs(root:GetNodes()) do
+    if BNET[SectionKey(node) or ""] then return false end -- (the game's own there)
+    local data = node.GetData and node:GetData()
+    if type(data) == "table" and data.friendIndex then return false end
+  end
+  -- (a search typed or a filter ticked: none found may be right)
+  local bar = view and view.FilterBar and view.FilterBar.SearchBar
+  local okText, text = pcall(function() return bar and bar:GetText() end)
+  if okText and type(text) == "string" and not issecret(text) and text ~= "" then return false end
+  for _, on in pairs(type(view) == "table" and type(view.selectedSearchFilterOptions) == "table" and view.selectedSearchFilterOptions or {}) do
+    if on then return false end
+  end
+  local okCount, total = pcall(BNGetNumFriends)
+  if not okCount or type(total) ~= "number" or issecret(total) or total <= 0 then return false end
+  if not (C_BattleNet and C_BattleNet.GetFriendAccountInfo) then return false end
+  local lists = { [HEADER_FAVORITES] = { online = 0 }, [HEADER_FRIENDS] = { online = 0 } }
+  for index = 1, total do
+    local ok, info = pcall(C_BattleNet.GetFriendAccountInfo, index)
+    if ok and type(info) == "table" then
+      local list = lists[info.isFavorite and HEADER_FAVORITES or HEADER_FRIENDS]
+      list[#list + 1] = { friendIndex = index, accountInfo = info }
+      local game = info.gameAccountInfo
+      if type(game) == "table" and game.isOnline then list.online = list.online + 1 end
+    end
+  end
+  local headers = { [HEADER_FAVORITES] = SOCIAL_UI_FAVORITE_FRIENDS_LIST_HEADER, [HEADER_FRIENDS] = SOCIAL_UI_FRIENDS_LIST_HEADER }
+  local put = 0
+  for _, headerType in ipairs({ HEADER_FAVORITES, HEADER_FRIENDS }) do
+    local list = lists[headerType]
+    if #list > 0 and type(headers[headerType]) == "string" then
+      if put > 0 then provider:Insert({ isSpacer = true }) end
+      local section = provider:Insert({ headerType = headerType, headerText = headers[headerType]:format(list.online, #list) })
+      local collapsed = view and view.IsHeaderCollapsed and view:IsHeaderCollapsed(headerType) or false
+      if section.SetCollapsed then
+        local C = TreeDataProviderConstants or {}
+        section:SetCollapsed(collapsed, C.RetainChildCollapse, C.SkipInvalidation)
+      end
+      section:Insert({ isSpacer = true })
+      for _, data in ipairs(list) do section:Insert(data) end
+      put = put + #list
+    end
+  end
+  if put == 0 then return false end
+  back.count = back.count + 1
+  local okStack, stack = pcall(debugstack, 3, 8, 0)
+  back.last = { at = date and date("%H:%M:%S") or "", friends = put, stack = okStack and stack or "" }
+  return true
+end
+
+-- For Clara's report: how often the game's list came without its Battle.net friends, and from where the last time
+function CFL.BnetReport()
+  local back = CFL.bnetBack
+  local out = { ("friends list: the game's own search gave no Battle.net friend %d time(s) this session%s"):format(back.count,
+    back.count > 0 and " (put back by Clara each time)" or "") }
+  if back.last then
+    out[#out + 1] = ("    last at %s, %d friends put back; the list built from:"):format(back.last.at, back.last.friends)
+    for line in tostring(back.last.stack):gmatch("[^\n]+") do out[#out + 1] = "      " .. line end
+  end
+  return out
+end
+
 local function ShownProvider()
   local box = socialView and socialView.ScrollBox
   local provider = box and box.GetDataProvider and box:GetDataProvider()
@@ -1544,7 +1617,18 @@ function CFL.HookSocial()
   if not (view and view.InsertFriendsIntoDataProvider and FriendsListSocialCardMixin) then return false end
   socialView = view
   -- (in the list the game builds, before it lays it out: our sections in it, all in the player's order)
-  hooksecurefunc(view, "InsertFriendsIntoDataProvider", function(_, provider) Arrange(provider) end)
+  hooksecurefunc(view, "InsertFriendsIntoDataProvider", function(self, provider)
+    pcall(CFL.BnetBack, self, provider)
+    Arrange(provider)
+  end)
+  -- (its search gave nothing at all: the game puts no friend in, and the list reaches the scroll box unarranged)
+  if view.ScrollBox and type(view.ScrollBox.SetDataProvider) == "function" then
+    hooksecurefunc(view.ScrollBox, "SetDataProvider", function(_, provider)
+      if provider == nil or provider == arranged or not provider.GetRootNode then return end
+      pcall(CFL.BnetBack, view, provider)
+      Arrange(provider)
+    end)
+  end
   -- (our sections' fold, as the game keeps it for its own: kept here too, for the next times)
   if type(view.SaveHeaderCollapsedState) == "function" then
     hooksecurefunc(view, "SaveHeaderCollapsedState", function(_, headerType, collapsed)
