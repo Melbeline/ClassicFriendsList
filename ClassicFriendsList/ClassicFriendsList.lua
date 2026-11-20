@@ -1671,7 +1671,7 @@ end
 local wasOnline = {} -- lower-case whole name -> online when last looked
 local settled = false -- (the first moments after login: the ones already online heard, not announced)
 -- "No player named" lines held back a moment (see "Held back", below): Key(name) -> the line(s), the windows, when
-CFL.Withheld = { lines = {} } -- (no local of its own: the file's main chunk is at Lua's 200 locals)
+CFL.Withheld = { lines = {}, said = {} } -- (no local of its own: the file's main chunk is at Lua's 200 locals)
 local function Announce(alt, online)
   local frame = DEFAULT_CHAT_FRAME
   if not (frame and frame.AddMessage) then return end
@@ -1686,7 +1686,19 @@ local function Announce(alt, online)
   else
     text = (ERR_FRIEND_OFFLINE_S or "%s has gone offline."):format(alt.name)
   end
-  frame:AddMessage(text, r, g, b)
+  -- (said a moment later: back as it was meanwhile, online then offline at once or the reverse, neither said; 3
+  -- seconds, more while the server is slow)
+  local said = CFL.Withheld.said
+  local pending = said[key]
+  if pending and pending.online ~= online then said[key] = nil return end
+  pending = { online = online }
+  said[key] = pending
+  local wait = CFL.Wait and CFL.Wait() or 2
+  C_Timer.After(math.max(CFL.Withheld.HOLD_MIN or 3, wait + 1), function()
+    if said[key] ~= pending then return end
+    said[key] = nil
+    frame:AddMessage(text, r, g, b)
+  end)
 end
 local function Look(announce)
   MendKnown()
